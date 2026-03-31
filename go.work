@@ -1,0 +1,11 @@
+go 1.21
+
+use (
+	./backend/api-service
+	./backend/auth-service
+	./backend/catalog-service
+	./backend/jam-service
+	./backend/playback-service
+	./backend/rt-gateway
+	./backend/shared
+)

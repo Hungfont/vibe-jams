@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "kafka-engineer": {
+      "source": "404kidwiz/claude-supercode-skills",
+      "sourceType": "github",
+      "computedHash": "9ffb10f64da211e8780b53a34c4b89048e7a051ff8e6e075a96ac323232ca6af"
+    }
+  }
+}

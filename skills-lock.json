@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "skills": {
+    "golang-error-handling": {
+      "source": "samber/cc-skills-golang",
+      "sourceType": "github",
+      "computedHash": "6a070882d815da88f21c83c11760d9fc1ffa87e2e57bd66f07a47b1a0566e776"
+    },
+    "golang-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "517209072b5cbeb7dfdb41f634ecff658e34e7c9e081e425d618378e9818a941"
+    },
+    "microservices-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "8df9775505ca517ba69a5a2ca2a32333f8ed0cf936dbf60c1d411f13b628cfc6"
+    },
+    "redis-best-practices": {
+      "source": "mindrally/skills",
+      "sourceType": "github",
+      "computedHash": "7d5b0f93221b2b0f1f1c35352d06990a9d18226aa95f546b161b10a4fdaabf6b"
+    }
+  }
+}
