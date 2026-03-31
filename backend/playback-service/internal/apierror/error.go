@@ -14,6 +14,8 @@ const (
 	CodeHostOnly = "host_only"
 	// CodeVersionConflict is returned when optimistic concurrency check fails.
 	CodeVersionConflict = "version_conflict"
+	// CodeSessionEnded is returned when command targets ended session.
+	CodeSessionEnded = "session_ended"
 	// CodeNotFound is returned when requested session context is missing.
 	CodeNotFound = "not_found"
 	// CodeInternalError is returned on unexpected server failures.

@@ -187,3 +187,50 @@ func TestPlaybackCommand_StaleVersionRejectedAndNoPublish(t *testing.T) {
 		t.Fatalf("error code mismatch: got %q want version_conflict", errorBody.Error.Code)
 	}
 }
+
+func TestPlaybackCommand_EndedSessionRejectedAndNoPublish(t *testing.T) {
+	t.Parallel()
+
+	repo := repository.NewRedisPlaybackRepository()
+	if err := repo.SeedSession("jam_1", "host_1", 7); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if err := repo.EndSession("jam_1", "host_1"); err != nil {
+		t.Fatalf("end session: %v", err)
+	}
+
+	pub := &kafka.InMemoryPublisher{}
+	svc := service.New(repo, kafka.NewProducer(pub))
+	h := NewHTTPHandler(svc, stubValidator{
+		claims: sharedauth.Claims{
+			UserID:       "host_1",
+			Plan:         "premium",
+			SessionState: sharedauth.SessionStateValid,
+		},
+	})
+
+	body := []byte(`{"command":"pause","clientEventId":"evt_4","expectedQueueVersion":7}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/jam/sessions/jam_1/playback/commands", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-host-valid")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusConflict)
+	}
+	if len(pub.Records) != 0 {
+		t.Fatalf("expected no published record, got %d", len(pub.Records))
+	}
+
+	var errorBody struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&errorBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if errorBody.Error.Code != "session_ended" {
+		t.Fatalf("error code mismatch: got %q want session_ended", errorBody.Error.Code)
+	}
+}

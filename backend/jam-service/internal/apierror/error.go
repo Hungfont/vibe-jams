@@ -12,10 +12,14 @@ const (
 	CodeUnauthorized = "unauthorized"
 	// CodePremiumRequired is returned when premium entitlement is required.
 	CodePremiumRequired = "premium_required"
+	// CodeHostOnly is returned when a non-host executes host-only operation.
+	CodeHostOnly = "host_only"
 	// CodeNotFound is returned when a requested queue item cannot be found.
 	CodeNotFound = "not_found"
 	// CodeVersionConflict is returned when optimistic concurrency check fails.
 	CodeVersionConflict = "version_conflict"
+	// CodeSessionEnded is returned when write command targets ended session.
+	CodeSessionEnded = "session_ended"
 	// CodeInternalError is returned on unexpected server failures.
 	CodeInternalError = "internal_error"
 )

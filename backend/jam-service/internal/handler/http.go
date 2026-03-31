@@ -34,14 +34,22 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/api/v1/jams/create":
 		h.handleCreate(w, r)
 		return
-	case strings.HasPrefix(r.URL.Path, "/api/v1/jams/") && strings.HasSuffix(r.URL.Path, "/end"):
-		jamID, ok := parseJamEndRoute(r.URL.Path)
+	case strings.HasPrefix(r.URL.Path, "/api/v1/jams/"):
+		jamID, action, ok := parseJamSessionActionRoute(r.URL.Path)
 		if !ok {
-			http.NotFound(w, r)
+			break
+		}
+		switch action {
+		case "join":
+			h.handleJoin(jamID, w, r)
+			return
+		case "leave":
+			h.handleLeave(jamID, w, r)
+			return
+		case "end":
+			h.handleEnd(jamID, w, r)
 			return
 		}
-		h.handleEnd(jamID, w, r)
-		return
 	}
 
 	jamID, action, ok := parseJamQueueRoute(r.URL.Path)
@@ -75,11 +83,51 @@ func (h *HTTPHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	session, err := h.service.CreateSession(claims.UserID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, session)
+}
 
-	writeJSON(w, http.StatusCreated, map[string]string{
-		"status":     "created",
-		"hostUserId": claims.UserID,
-	})
+// handleJoin adds caller as participant in one active session.
+func (h *HTTPHandler) handleJoin(jamID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	claims, ok := h.authorize(r.Context(), w, r, false)
+	if !ok {
+		return
+	}
+	session, err := h.service.JoinSession(jamID, claims.UserID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, session)
+}
+
+// handleLeave removes caller from participant list.
+// Host leave automatically ends the session.
+func (h *HTTPHandler) handleLeave(jamID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	claims, ok := h.authorize(r.Context(), w, r, false)
+	if !ok {
+		return
+	}
+	session, err := h.service.LeaveSession(jamID, claims.UserID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, session)
 }
 
 // handleEnd ends a jam session for premium users.
@@ -93,13 +141,12 @@ func (h *HTTPHandler) handleEnd(jamID string, w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-
-	writeJSON(w, http.StatusOK, map[string]string{
-		"status":   "ended",
-		"jamId":    jamID,
-		"endedBy":  claims.UserID,
-		"endCause": "host_request",
-	})
+	session, err := h.service.EndSession(jamID, claims.UserID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, session)
 }
 
 // handleAdd processes queue-add command with idempotency behavior.
@@ -219,6 +266,10 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		apierror.Write(w, http.StatusConflict, apierror.CodeVersionConflict, err.Error())
 	case service.IsNotFound(err):
 		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, err.Error())
+	case service.IsHostOnly(err):
+		apierror.Write(w, http.StatusForbidden, apierror.CodeHostOnly, "host only command")
+	case service.IsSessionEnded(err):
+		apierror.Write(w, http.StatusConflict, apierror.CodeSessionEnded, "session has ended")
 	default:
 		apierror.Write(w, http.StatusInternalServerError, apierror.CodeInternalError, "internal server error")
 	}
@@ -280,20 +331,25 @@ func parseJamQueueRoute(path string) (jamID string, action string, ok bool) {
 	return parts[0], parts[2], true
 }
 
-// parseJamEndRoute extracts jam ID from /api/v1/jams/{jamId}/end path.
-func parseJamEndRoute(path string) (jamID string, ok bool) {
+// parseJamSessionActionRoute extracts jam ID and lifecycle action from /api/v1/jams/{jamId}/{action} path.
+func parseJamSessionActionRoute(path string) (jamID string, action string, ok bool) {
 	const prefix = "/api/v1/jams/"
 	if !strings.HasPrefix(path, prefix) {
-		return "", false
+		return "", "", false
 	}
 
 	trimmed := strings.TrimPrefix(path, prefix)
 	parts := strings.Split(trimmed, "/")
-	if len(parts) != 2 || parts[1] != "end" {
-		return "", false
+	if len(parts) != 2 {
+		return "", "", false
 	}
-	if parts[0] == "" {
-		return "", false
+	if parts[0] == "" || parts[1] == "" {
+		return "", "", false
 	}
-	return parts[0], true
+	switch parts[1] {
+	case "join", "leave", "end":
+		return parts[0], parts[1], true
+	default:
+		return "", "", false
+	}
 }

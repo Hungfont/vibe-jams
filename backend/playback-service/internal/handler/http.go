@@ -98,6 +98,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		apierror.Write(w, http.StatusForbidden, apierror.CodeHostOnly, "host only command")
 	case service.IsVersionConflict(err):
 		apierror.Write(w, http.StatusConflict, apierror.CodeVersionConflict, "stale queue version")
+	case service.IsSessionEnded(err):
+		apierror.Write(w, http.StatusConflict, apierror.CodeSessionEnded, "session has ended")
 	case service.IsNotFound(err):
 		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, "session not found")
 	default:

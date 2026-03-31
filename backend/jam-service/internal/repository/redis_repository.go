@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"sync"
 
 	"video-streaming/backend/jams/internal/model"
@@ -16,6 +17,14 @@ var (
 	ErrVersionConflict = errors.New("queue version conflict")
 	// ErrIdempotencyKeyRequired indicates add missed idempotency key.
 	ErrIdempotencyKeyRequired = errors.New("idempotency key required")
+	// ErrSessionNotFound indicates requested session does not exist.
+	ErrSessionNotFound = errors.New("session not found")
+	// ErrSessionEnded indicates write command attempted against ended session.
+	ErrSessionEnded = errors.New("session ended")
+	// ErrHostOwnershipRequired indicates actor is not host for host-only operation.
+	ErrHostOwnershipRequired = errors.New("host ownership required")
+	// ErrParticipantNotFound indicates user is not in session participant list.
+	ErrParticipantNotFound = errors.New("participant not found")
 )
 
 type addResult struct {
@@ -27,12 +36,19 @@ type jamQueueState struct {
 	queueVersion      int64
 	nextItemSequence  int64
 	idempotencyResult map[string]addResult
+	sessionVersion    int64
+	status            model.SessionStatus
+	hostUserID        string
+	participants      map[string]model.SessionRole
+	endCause          string
+	endedBy           string
 }
 
 // RedisQueueRepository stores queue state using in-memory maps with Redis-like key model.
 type RedisQueueRepository struct {
-	mu   sync.Mutex
-	jams map[string]*jamQueueState
+	mu                  sync.Mutex
+	jams                map[string]*jamQueueState
+	nextSessionSequence int64
 }
 
 // NewRedisQueueRepository builds a repository implementation used by queue service.
@@ -57,6 +73,141 @@ func QueueIdempotencyKey(jamID string) string {
 	return fmt.Sprintf("jams:%s:queue:idempotency", jamID)
 }
 
+// SessionMetadataKey returns Redis hash key format for session metadata.
+func SessionMetadataKey(jamID string) string {
+	return fmt.Sprintf("jams:%s:session:meta", jamID)
+}
+
+// SessionMembersKey returns Redis hash key format for session members.
+func SessionMembersKey(jamID string) string {
+	return fmt.Sprintf("jams:%s:session:members", jamID)
+}
+
+// SessionPermissionsKey returns Redis hash key format for session permissions.
+func SessionPermissionsKey(jamID string) string {
+	return fmt.Sprintf("jams:%s:session:permissions", jamID)
+}
+
+// CreateSession creates a new jam session with requester as host.
+func (r *RedisQueueRepository) CreateSession(hostUserID string) (model.SessionSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.nextSessionSequence++
+	jamID := fmt.Sprintf("jam_%d", r.nextSessionSequence)
+
+	state := &jamQueueState{
+		items:             make([]model.QueueItem, 0),
+		idempotencyResult: make(map[string]addResult),
+		sessionVersion:    1,
+		status:            model.SessionStatusActive,
+		hostUserID:        hostUserID,
+		participants: map[string]model.SessionRole {
+			hostUserID: model.SessionRoleHost,
+		},
+	}
+	r.jams[jamID] = state
+	return buildSessionSnapshot(jamID, state), nil
+}
+
+// JoinSession adds one participant to an active session.
+func (r *RedisQueueRepository) JoinSession(jamID string, userID string) (model.SessionSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	if err := ensureActive(state); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	if _, exists := state.participants[userID]; !exists {
+		state.participants[userID] = model.SessionRoleMember
+		state.sessionVersion++
+	}
+
+	return buildSessionSnapshot(jamID, state), nil
+}
+
+// LeaveSession removes one participant from an active session.
+// If the host leaves, the session is ended with cause host_leave.
+func (r *RedisQueueRepository) LeaveSession(jamID string, userID string) (model.SessionSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	if err := ensureActive(state); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	role, exists := state.participants[userID]
+	if !exists {
+		return model.SessionSnapshot{}, ErrParticipantNotFound
+	}
+
+	if role == model.SessionRoleHost {
+		state.status = model.SessionStatusEnded
+		state.endCause = "host_leave"
+		state.endedBy = userID
+		state.sessionVersion++
+		return buildSessionSnapshot(jamID, state), nil
+	}
+
+	delete(state.participants, userID)
+	state.sessionVersion++
+	return buildSessionSnapshot(jamID, state), nil
+}
+
+// EndSession explicitly ends one session and requires host ownership.
+func (r *RedisQueueRepository) EndSession(jamID string, actorUserID string) (model.SessionSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	if err := ensureActive(state); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	if state.hostUserID != actorUserID {
+		return model.SessionSnapshot{}, ErrHostOwnershipRequired
+	}
+
+	state.status = model.SessionStatusEnded
+	state.endCause = "host_request"
+	state.endedBy = actorUserID
+	state.sessionVersion++
+	return buildSessionSnapshot(jamID, state), nil
+}
+
+// SessionSnapshot returns current session metadata and participants.
+func (r *RedisQueueRepository) SessionSnapshot(jamID string) (model.SessionSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	return buildSessionSnapshot(jamID, state), nil
+}
+
+// EnsureSessionActive validates that one session exists and is active.
+func (r *RedisQueueRepository) EnsureSessionActive(jamID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return err
+	}
+	return ensureActive(state)
+}
+
 // Add atomically appends one queue item, increments version, and records idempotency.
 func (r *RedisQueueRepository) Add(jamID string, req model.AddQueueItemRequest) (model.QueueSnapshot, bool, error) {
 	r.mu.Lock()
@@ -66,7 +217,13 @@ func (r *RedisQueueRepository) Add(jamID string, req model.AddQueueItemRequest) 
 		return model.QueueSnapshot{}, false, ErrIdempotencyKeyRequired
 	}
 
-	state := r.ensureJamState(jamID)
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.QueueSnapshot{}, false, err
+	}
+	if err := ensureActive(state); err != nil {
+		return model.QueueSnapshot{}, false, err
+	}
 
 	if previous, ok := state.idempotencyResult[req.IdempotencyKey]; ok {
 		return cloneSnapshot(previous.snapshot), true, nil
@@ -96,7 +253,13 @@ func (r *RedisQueueRepository) Remove(jamID string, itemID string) (model.QueueS
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	state := r.ensureJamState(jamID)
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.QueueSnapshot{}, err
+	}
+	if err := ensureActive(state); err != nil {
+		return model.QueueSnapshot{}, err
+	}
 	index := slices.IndexFunc(state.items, func(item model.QueueItem) bool {
 		return item.ItemID == itemID
 	})
@@ -119,7 +282,13 @@ func (r *RedisQueueRepository) Reorder(jamID string, expectedVersion int64, item
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	state := r.ensureJamState(jamID)
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.QueueSnapshot{}, err
+	}
+	if err := ensureActive(state); err != nil {
+		return model.QueueSnapshot{}, err
+	}
 	if expectedVersion != state.queueVersion {
 		return model.QueueSnapshot{}, ErrVersionConflict
 	}
@@ -162,7 +331,10 @@ func (r *RedisQueueRepository) Snapshot(jamID string) (model.QueueSnapshot, erro
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	state := r.ensureJamState(jamID)
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.QueueSnapshot{}, err
+	}
 	return model.QueueSnapshot{
 		JamID:        jamID,
 		QueueVersion: state.queueVersion,
@@ -180,9 +352,49 @@ func (r *RedisQueueRepository) ensureJamState(jamID string) *jamQueueState {
 	state = &jamQueueState{
 		items:             make([]model.QueueItem, 0),
 		idempotencyResult: make(map[string]addResult),
+		status:            model.SessionStatusActive,
+		participants:      make(map[string]model.SessionRole),
 	}
 	r.jams[jamID] = state
 	return state
+}
+
+func ensureActive(state *jamQueueState) error {
+	if state.status == model.SessionStatusEnded {
+		return ErrSessionEnded
+	}
+	return nil
+}
+
+func (r *RedisQueueRepository) getSessionState(jamID string) (*jamQueueState, error) {
+	state, ok := r.jams[jamID]
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	return state, nil
+}
+
+func buildSessionSnapshot(jamID string, state *jamQueueState) model.SessionSnapshot {
+	participants := make([]model.SessionParticipant, 0, len(state.participants))
+	for userID, role := range state.participants {
+		participants = append(participants, model.SessionParticipant{
+			UserID: userID,
+			Role:   role,
+		})
+	}
+	sort.Slice(participants, func(i, j int) bool {
+		return participants[i].UserID < participants[j].UserID
+	})
+
+	return model.SessionSnapshot{
+		JamID:          jamID,
+		Status:         state.status,
+		HostUserID:     state.hostUserID,
+		Participants:   participants,
+		SessionVersion: state.sessionVersion,
+		EndCause:       state.endCause,
+		EndedBy:        state.endedBy,
+	}
 }
 
 // cloneItems returns a copy to keep repository internal state immutable externally.

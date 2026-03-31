@@ -74,6 +74,102 @@ const openAPISpec = `{
         }
       }
     },
+    "/api/v1/jams/create": {
+      "post": {
+        "summary": "Create a jam session",
+        "responses": {
+          "201": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SessionSnapshot" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } },
+          "403": { "description": "Premium required", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } }
+        }
+      }
+    },
+    "/api/v1/jams/{jamId}/join": {
+      "post": {
+        "summary": "Join an active jam session",
+        "parameters": [
+          {
+            "name": "jamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Joined session",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SessionSnapshot" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } },
+          "404": { "description": "Session not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } },
+          "409": { "description": "Session ended", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } }
+        }
+      }
+    },
+    "/api/v1/jams/{jamId}/leave": {
+      "post": {
+        "summary": "Leave an active jam session (host leave ends session)",
+        "parameters": [
+          {
+            "name": "jamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Left session",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SessionSnapshot" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } },
+          "404": { "description": "Session or participant not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } },
+          "409": { "description": "Session ended", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } }
+        }
+      }
+    },
+    "/api/v1/jams/{jamId}/end": {
+      "post": {
+        "summary": "End an active jam session (host only)",
+        "parameters": [
+          {
+            "name": "jamId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ended session",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SessionSnapshot" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } },
+          "403": { "description": "Premium required or host-only constraint", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } },
+          "404": { "description": "Session not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } },
+          "409": { "description": "Session ended", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorBody" } } } }
+        }
+      }
+    },
     "/api/v1/jams/{jamId}/queue/add": {
       "post": {
         "summary": "Add one item to jam queue",
@@ -301,6 +397,30 @@ const openAPISpec = `{
           }
         },
         "required": ["jamId", "queueVersion", "items"]
+      },
+      "SessionParticipant": {
+        "type": "object",
+        "properties": {
+          "userId": { "type": "string" },
+          "role": { "type": "string", "example": "host" }
+        },
+        "required": ["userId", "role"]
+      },
+      "SessionSnapshot": {
+        "type": "object",
+        "properties": {
+          "jamId": { "type": "string" },
+          "status": { "type": "string", "example": "active" },
+          "hostUserId": { "type": "string" },
+          "sessionVersion": { "type": "integer", "format": "int64" },
+          "participants": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SessionParticipant" }
+          },
+          "endCause": { "type": "string" },
+          "endedBy": { "type": "string" }
+        },
+        "required": ["jamId", "status", "hostUserId", "sessionVersion", "participants"]
       },
       "AddQueueItemRequest": {
         "type": "object",

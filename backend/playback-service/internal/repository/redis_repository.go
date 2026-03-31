@@ -12,12 +12,15 @@ import (
 var (
 	// ErrSessionNotFound indicates a command references unknown session.
 	ErrSessionNotFound = errors.New("session not found")
+	// ErrSessionEnded indicates command references ended session.
+	ErrSessionEnded = errors.New("session ended")
 	// ErrInvalidSessionState indicates state mutation attempted on invalid data.
 	ErrInvalidSessionState = errors.New("invalid session state")
 )
 
 type sessionState struct {
 	hostUserID       string
+	status           string
 	queueVersion     int64
 	aggregateVersion int64
 	playbackState    string
@@ -65,11 +68,28 @@ func (r *RedisPlaybackRepository) SeedSession(sessionID string, hostUserID strin
 	if !ok {
 		current = &sessionState{
 			playbackState: "paused",
+			status:        "active",
 		}
 		r.sessions[sessionID] = current
 	}
 	current.hostUserID = hostUserID
 	current.queueVersion = queueVersion
+	return nil
+}
+
+// EndSession marks one session as ended for command rejection checks.
+func (r *RedisPlaybackRepository) EndSession(sessionID string, endedBy string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	current, ok := r.sessions[sessionID]
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if strings.TrimSpace(endedBy) == "" {
+		return ErrInvalidSessionState
+	}
+	current.status = "ended"
 	return nil
 }
 
@@ -97,6 +117,18 @@ func (r *RedisPlaybackRepository) QueueVersion(sessionID string) (int64, error) 
 	return current.queueVersion, nil
 }
 
+// SessionStatus returns current lifecycle status for one session.
+func (r *RedisPlaybackRepository) SessionStatus(sessionID string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	current, ok := r.sessions[sessionID]
+	if !ok {
+		return "", ErrSessionNotFound
+	}
+	return current.status, nil
+}
+
 // ApplyCommand mutates playback state and returns transition metadata.
 func (r *RedisPlaybackRepository) ApplyCommand(sessionID string, command string, positionMS int64, actorUserID string, clientEventID string) (model.PlaybackTransition, error) {
 	r.mu.Lock()
@@ -105,6 +137,9 @@ func (r *RedisPlaybackRepository) ApplyCommand(sessionID string, command string,
 	current, ok := r.sessions[sessionID]
 	if !ok {
 		return model.PlaybackTransition{}, ErrSessionNotFound
+	}
+	if current.status == "ended" {
+		return model.PlaybackTransition{}, ErrSessionEnded
 	}
 
 	switch command {

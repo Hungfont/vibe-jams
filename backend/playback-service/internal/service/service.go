@@ -15,12 +15,15 @@ var (
 	ErrInvalidRequest = errors.New("invalid request")
 	// ErrHostOnly indicates command requires host role.
 	ErrHostOnly = errors.New("host only")
+	// ErrSessionEnded indicates command is blocked by ended session.
+	ErrSessionEnded = errors.New("session ended")
 	// ErrVersionConflict indicates expected queue version is stale.
 	ErrVersionConflict = errors.New("version conflict")
 )
 
 // StateRepository abstracts queue/playback metadata persistence.
 type StateRepository interface {
+	SessionStatus(sessionID string) (string, error)
 	HostUserID(sessionID string) (string, error)
 	QueueVersion(sessionID string) (int64, error)
 	ApplyCommand(sessionID string, command string, positionMS int64, actorUserID string, clientEventID string) (model.PlaybackTransition, error)
@@ -52,6 +55,13 @@ func (s *Service) ExecuteCommand(ctx context.Context, sessionID string, actorUse
 	}
 	if err := req.Validate(); err != nil {
 		return model.CommandAcceptedResponse{}, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	}
+	status, err := s.repo.SessionStatus(sessionID)
+	if err != nil {
+		return model.CommandAcceptedResponse{}, err
+	}
+	if strings.EqualFold(status, "ended") {
+		return model.CommandAcceptedResponse{}, ErrSessionEnded
 	}
 
 	hostUserID, err := s.repo.HostUserID(sessionID)
@@ -110,6 +120,11 @@ func IsVersionConflict(err error) bool {
 // IsNotFound reports whether session state is missing.
 func IsNotFound(err error) bool {
 	return errors.Is(err, repository.ErrSessionNotFound)
+}
+
+// IsSessionEnded reports whether command is blocked by ended state.
+func IsSessionEnded(err error) bool {
+	return errors.Is(err, ErrSessionEnded) || errors.Is(err, repository.ErrSessionEnded)
 }
 
 func normalizeCommand(command string) string {

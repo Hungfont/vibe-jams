@@ -1,5 +1,42 @@
 package model
 
+// SessionStatus represents lifecycle state for one jam session.
+type SessionStatus string
+
+const (
+	// SessionStatusActive means session accepts write commands.
+	SessionStatusActive SessionStatus = "active"
+	// SessionStatusEnded means session is terminated and write commands are blocked.
+	SessionStatusEnded SessionStatus = "ended"
+)
+
+// SessionRole defines participant authorization role.
+type SessionRole string
+
+const (
+	// SessionRoleHost marks the session owner.
+	SessionRoleHost SessionRole = "host"
+	// SessionRoleMember marks a non-host participant.
+	SessionRoleMember SessionRole = "member"
+)
+
+// SessionParticipant represents one member plus role.
+type SessionParticipant struct {
+	UserID string      `json:"userId"`
+	Role   SessionRole `json:"role"`
+}
+
+// SessionSnapshot describes persisted jam session metadata and participants.
+type SessionSnapshot struct {
+	JamID          string               `json:"jamId"`
+	Status         SessionStatus        `json:"status"`
+	HostUserID     string               `json:"hostUserId"`
+	Participants   []SessionParticipant `json:"participants"`
+	SessionVersion int64                `json:"sessionVersion"`
+	EndCause       string               `json:"endCause,omitempty"`
+	EndedBy        string               `json:"endedBy,omitempty"`
+}
+
 // QueueItem represents one track entry inside a jam queue.
 type QueueItem struct {
 	ItemID  string `json:"itemId"`
