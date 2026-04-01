@@ -49,6 +49,9 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "end":
 			h.handleEnd(jamID, w, r)
 			return
+		case "state":
+			h.handleState(jamID, w, r)
+			return
 		}
 	}
 
@@ -231,6 +234,37 @@ func (h *HTTPHandler) handleSnapshot(jamID string, w http.ResponseWriter, r *htt
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
+// handleState returns combined session + queue snapshot for recovery workflows.
+func (h *HTTPHandler) handleState(jamID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	session, err := h.service.SessionSnapshot(jamID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	queue, err := h.service.Snapshot(jamID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	aggregateVersion := session.SessionVersion
+	if queue.QueueVersion > aggregateVersion {
+		aggregateVersion = queue.QueueVersion
+	}
+
+	writeJSON(w, http.StatusOK, model.SessionStateSnapshot{
+		Session:          session,
+		Queue:            queue,
+		AggregateVersion: aggregateVersion,
+	})
+}
+
 // decodeJSON parses JSON body and writes a consistent 400 response on errors.
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(r.Body)
@@ -347,7 +381,7 @@ func parseJamSessionActionRoute(path string) (jamID string, action string, ok bo
 		return "", "", false
 	}
 	switch parts[1] {
-	case "join", "leave", "end":
+	case "join", "leave", "end", "state":
 		return parts[0], parts[1], true
 	default:
 		return "", "", false

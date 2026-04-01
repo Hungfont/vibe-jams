@@ -297,6 +297,62 @@ func TestEndRequiresHostOwnership(t *testing.T) {
 	}
 }
 
+func TestStateSnapshotEndpoint_ReturnsCombinedSessionAndQueueState(t *testing.T) {
+	t.Parallel()
+
+	createReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/create", nil)
+	createReq.Header.Set("Authorization", "Bearer token")
+	createRec := httptest.NewRecorder()
+
+	hWithAuth := NewHTTPHandler(newTestService(), stubValidator{
+		claims: sharedauth.Claims{
+			UserID:       "host_1",
+			Plan:         "premium",
+			SessionState: sharedauth.SessionStateValid,
+		},
+	})
+	hWithAuth.ServeHTTP(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create status mismatch: got %d want %d", createRec.Code, http.StatusCreated)
+	}
+
+	var created struct {
+		JamID string `json:"jamId"`
+	}
+	if err := json.NewDecoder(createRec.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	stateReq := httptest.NewRequest(http.MethodGet, "/api/v1/jams/"+created.JamID+"/state", nil)
+	stateRec := httptest.NewRecorder()
+	hWithAuth.ServeHTTP(stateRec, stateReq)
+	if stateRec.Code != http.StatusOK {
+		t.Fatalf("state status mismatch: got %d want %d", stateRec.Code, http.StatusOK)
+	}
+
+	var state struct {
+		Session struct {
+			JamID string `json:"jamId"`
+		} `json:"session"`
+		Queue struct {
+			JamID string `json:"jamId"`
+		} `json:"queue"`
+		AggregateVersion int64 `json:"aggregateVersion"`
+	}
+	if err := json.NewDecoder(stateRec.Body).Decode(&state); err != nil {
+		t.Fatalf("decode state response: %v", err)
+	}
+	if state.Session.JamID != created.JamID {
+		t.Fatalf("session jamId mismatch: got %q want %q", state.Session.JamID, created.JamID)
+	}
+	if state.Queue.JamID != created.JamID {
+		t.Fatalf("queue jamId mismatch: got %q want %q", state.Queue.JamID, created.JamID)
+	}
+	if state.AggregateVersion <= 0 {
+		t.Fatalf("aggregateVersion must be positive, got %d", state.AggregateVersion)
+	}
+}
+
 func newTestHandler(validator stubValidator) *HTTPHandler {
 	return NewHTTPHandler(newTestService(), validator)
 }

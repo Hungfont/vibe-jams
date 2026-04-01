@@ -219,6 +219,15 @@ func (s *Service) Snapshot(jamID string) (model.QueueSnapshot, error) {
 	return s.repo.Snapshot(jamID)
 }
 
+// SessionSnapshot validates jam ID and returns latest lifecycle state.
+func (s *Service) SessionSnapshot(jamID string) (model.SessionSnapshot, error) {
+	if jamID == "" {
+		return model.SessionSnapshot{}, fmt.Errorf("%w: jamId is required", ErrInvalidRequest)
+	}
+
+	return s.repo.SessionSnapshot(jamID)
+}
+
 // IsVersionConflict reports whether an error is version conflict.
 func IsVersionConflict(err error) bool {
 	return errors.Is(err, repository.ErrVersionConflict)

@@ -51,6 +51,13 @@ type QueueSnapshot struct {
 	Items        []QueueItem `json:"items"`
 }
 
+// SessionStateSnapshot combines lifecycle and queue read models for recovery.
+type SessionStateSnapshot struct {
+	Session          SessionSnapshot `json:"session"`
+	Queue            QueueSnapshot   `json:"queue"`
+	AggregateVersion int64           `json:"aggregateVersion"`
+}
+
 // AddQueueItemRequest defines request payload for queue-add endpoint.
 type AddQueueItemRequest struct {
 	TrackID        string `json:"trackId"`
