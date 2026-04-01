@@ -1,5 +1,7 @@
 # AGENTS Guide
 
+IMPORTANT: ALWAYS WRITE/UPDATE TEST FLOWs INTO ./docs/runbooks/run.md AFTER /opsx:apply for any new changes. ENSURE TEST FLOWS ARE CONCISE AND NOT TOO LONG.
+
 ## Rule Invocation Policy
 - The rule `docs-story-workflow` is opt-in only.
 - Only apply it when explicitly referenced with `@docs-story-workflow`.

@@ -20,5 +20,8 @@ schema: spec-driven
 #       - Break tasks into chunks of max 2 hours
 
 
+IMPORTANT: Always ensure the answer is concise and not too long. Also, always list the rules and skills being used before providing the answer.
+
+
 ALWAYS APPLY CODE FOR BACKEND IF THERE ARE "BACKEND" KEYWORDS IN /opx-apply COMMAND.
 ALWAYS ADD UPDATE SWAGGER IF THERE ARE SOME UPDATE/CREATE ON THE API.
