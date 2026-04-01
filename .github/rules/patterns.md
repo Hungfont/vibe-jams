@@ -42,4 +42,4 @@ func NewUserService(repo UserRepository, logger Logger) *UserService {
 
 ## Reference
 
-See skill: `golang-pro` for comprehensive Go patterns including concurrency, generics, interfaces, project-structure, reference-guide.
+See skill: `golang-patterns` for comprehensive Go patterns including concurrency, generics, interfaces, project-structure, reference-guide.

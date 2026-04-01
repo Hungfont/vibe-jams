@@ -11,11 +11,6 @@
       "sourceType": "github",
       "computedHash": "2168b141260f2c0c2c952afe22f0947cdc76f4339e823ab666933853e206e511"
     },
-    "golang-pro": {
-      "source": "jeffallan/claude-skills",
-      "sourceType": "github",
-      "computedHash": "517209072b5cbeb7dfdb41f634ecff658e34e7c9e081e425d618378e9818a941"
-    },
     "microservices-patterns": {
       "source": "wshobson/agents",
       "sourceType": "github",
