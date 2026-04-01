@@ -2,6 +2,8 @@ package kafka
 
 import (
 	"context"
+
+	sharedkafka "video-streaming/backend/shared/kafka"
 )
 
 // Record is one consumed Kafka message.
@@ -16,17 +18,18 @@ type Consumer interface {
 }
 
 // NoopConsumer keeps process wiring active without broker dependency.
-type NoopConsumer struct{}
+type NoopConsumer struct {
+	delegate *sharedkafka.NoOpsConsumer
+}
 
 // NewNoopConsumer builds a consumer that exits only when context is done.
 func NewNoopConsumer() *NoopConsumer {
-	return &NoopConsumer{}
+	return &NoopConsumer{delegate: sharedkafka.NewNoOpsConsumer()}
 }
 
 // Start blocks until context cancellation.
 func (c *NoopConsumer) Start(ctx context.Context, _ func(context.Context, Record) error) error {
-	<-ctx.Done()
-	return ctx.Err()
+	return c.delegate.Start(ctx)
 }
 
 // InMemoryConsumer is used by integration tests to inject records.

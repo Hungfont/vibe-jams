@@ -6,13 +6,17 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"video-streaming/backend/catalog-service/internal/config"
 	sharedcatalog "video-streaming/backend/shared/catalog"
 )
 
 func TestTrackLookupPlayable(t *testing.T) {
 	t.Parallel()
 
-	h := NewRouter()
+	h, err := NewRouter(config.Config{RuntimeProfile: "test", CatalogBackend: "inmemory"})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/internal/v1/catalog/tracks/trk_1", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -36,7 +40,10 @@ func TestTrackLookupPlayable(t *testing.T) {
 func TestTrackLookupUnavailable(t *testing.T) {
 	t.Parallel()
 
-	h := NewRouter()
+	h, err := NewRouter(config.Config{RuntimeProfile: "test", CatalogBackend: "inmemory"})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/internal/v1/catalog/tracks/trk_2", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -63,7 +70,10 @@ func TestTrackLookupUnavailable(t *testing.T) {
 func TestTrackLookupNotFound(t *testing.T) {
 	t.Parallel()
 
-	h := NewRouter()
+	h, err := NewRouter(config.Config{RuntimeProfile: "test", CatalogBackend: "inmemory"})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/internal/v1/catalog/tracks/trk_missing", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

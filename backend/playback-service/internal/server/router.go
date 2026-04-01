@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"video-streaming/backend/playback-service/internal/auth"
@@ -12,6 +14,7 @@ import (
 	"video-streaming/backend/playback-service/internal/repository"
 	"video-streaming/backend/playback-service/internal/service"
 	sharedcatalog "video-streaming/backend/shared/catalog"
+	sharedkafka "video-streaming/backend/shared/kafka"
 )
 
 const swaggerUIHTML = `<!DOCTYPE html>
@@ -184,18 +187,51 @@ type healthResponse struct {
 }
 
 // NewRouter builds all playback-service HTTP routes.
-func NewRouter(cfg config.Config) http.Handler {
-	mux := http.NewServeMux()
+func NewRouter(cfg config.Config) (http.Handler, error) {
+	if err := cfg.ValidateRuntimePolicy(); err != nil {
+		return nil, err
+	}
 
-	repo := repository.NewRedisPlaybackRepository()
+	mux := http.NewServeMux()
+	var repo *repository.RedisPlaybackRepository
+	switch strings.ToLower(cfg.StateStoreBackend) {
+	case "inmemory":
+		repo = repository.NewRedisPlaybackRepository()
+	case "redis", "postgres":
+		durableRepo, err := repository.NewDurablePlaybackRepository(cfg.StateStorePath)
+		if err != nil {
+			return nil, err
+		}
+		repo = durableRepo
+	default:
+		return nil, fmt.Errorf("unsupported STATE_STORE_BACKEND: %s", cfg.StateStoreBackend)
+	}
+
 	// Local seed keeps a testable baseline session for manual smoke checks.
 	_ = repo.SeedSession("jam-local", "host-local", 1)
 
-	publisher := &kafka.InMemoryPublisher{}
+	var publisher kafka.Publisher
+	switch strings.ToLower(cfg.KafkaTransport) {
+	case "kafka":
+		kp, err := kafka.NewKafkaPublisher(cfg.KafkaBootstrapServers)
+		if err != nil {
+			return nil, err
+		}
+		publisher = kp
+	case "inmemory":
+		publisher = &kafka.InMemoryPublisher{}
+	default:
+		publisher = sharedkafka.NewNoOpsProducer()
+		return nil, fmt.Errorf("unsupported KAFKA_TRANSPORT: %s", cfg.KafkaTransport)
+	}
+
 	producer := kafka.NewProducer(publisher)
 	var catalogValidator sharedcatalog.Validator
 	if cfg.EnableCatalogValidation {
 		catalogValidator = sharedcatalog.NewHTTPValidator(cfg.CatalogServiceURL, cfg.CatalogTimeout)
+	}
+	if cfg.AuthValidationBackend != "http" {
+		return nil, fmt.Errorf("AUTH_VALIDATION_BACKEND=%s is not supported", cfg.AuthValidationBackend)
 	}
 	playbackService := service.NewWithCatalogValidator(repo, producer, catalogValidator, cfg.EnableCatalogValidation)
 	authValidator := auth.NewHTTPValidator(cfg.AuthServiceURL, cfg.AuthTimeout)
@@ -206,7 +242,7 @@ func NewRouter(cfg config.Config) http.Handler {
 	mux.HandleFunc("/swagger/", swaggerUIHandler)
 	mux.HandleFunc("/swagger/openapi.json", openAPISpecHandler)
 	mux.Handle("/v1/jam/sessions/", playbackHandler)
-	return mux
+	return mux, nil
 }
 
 func swaggerUIHandler(w http.ResponseWriter, r *http.Request) {

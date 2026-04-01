@@ -23,10 +23,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	router, err := server.NewRouter(cfg)
+	if err != nil {
+		slog.Error("failed to build router", "error", err)
+		os.Exit(1)
+	}
+
 	addr := net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort))
 	httpServer := &http.Server{
 		Addr:              addr,
-		Handler:           server.NewRouter(cfg),
+		Handler:           router,
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		IdleTimeout:       cfg.IdleTimeout,
 	}

@@ -2,7 +2,6 @@
 
 ## Purpose
 Defines realtime websocket fanout behavior in `rt-gateway` for jam sessions, including ordered event delivery, gap recovery, reconnect fallback, and observability targets.
-
 ## Requirements
 ### Requirement: Session-scoped websocket room subscription
 The `rt-gateway` service SHALL provide websocket room subscription for each jam session using room key `jam:{sessionId}`.
@@ -69,3 +68,15 @@ The system SHALL expose fanout telemetry required to validate realtime performan
 #### Scenario: Recovery metrics are emitted
 - **WHEN** gap detection and snapshot recovery occur
 - **THEN** metrics for gap count, snapshot latency, and recovery outcome are emitted for operational monitoring
+
+### Requirement: Websocket handshake MUST enforce configured origin allowlist
+rt-gateway SHALL validate websocket handshake Origin against configured allowlist and SHALL reject unknown origins by default.
+
+#### Scenario: Allowlisted origin succeeds
+- **WHEN** a websocket client connects with Origin that exists in configured allowlist
+- **THEN** handshake succeeds and connection is accepted
+
+#### Scenario: Unknown origin is rejected
+- **WHEN** a websocket client connects with Origin that is not allowlisted
+- **THEN** handshake is rejected with deterministic forbidden-origin behavior and connection is closed
+

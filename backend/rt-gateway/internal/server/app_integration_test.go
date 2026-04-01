@@ -31,6 +31,9 @@ func TestWebsocketSubscriptionAndFanout(t *testing.T) {
 		ConsumerGroupID:      "rt-gateway-fanout",
 		QueueTopic:           "jam.queue.events",
 		PlaybackTopic:        "jam.playback.events",
+		KafkaBootstrap:       "localhost:9092",
+		ConsumerBackend:      "noop",
+		AllowedOrigins:       []string{"http://localhost:3000"},
 		RecoveryMaxRetries:   1,
 		RecoveryBackoff:      5 * time.Millisecond,
 		FeatureFanoutEnabled: true,
@@ -41,7 +44,7 @@ func TestWebsocketSubscriptionAndFanout(t *testing.T) {
 	defer testServer.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(testServer.URL, "http") + "/ws?sessionId=jam_1"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"http://localhost:3000"}})
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}
@@ -77,6 +80,87 @@ func TestWebsocketSubscriptionAndFanout(t *testing.T) {
 	}
 }
 
+func TestWebsocketFanout_EndToEndViaConsumerLoop(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		ServerHost:           "127.0.0.1",
+		ServerPort:           0,
+		ReadHeaderTimeout:    5 * time.Second,
+		IdleTimeout:          30 * time.Second,
+		ShutdownTimeout:      5 * time.Second,
+		JamServiceURL:        "http://localhost:8080",
+		SnapshotTimeout:      500 * time.Millisecond,
+		FanoutBufferSize:     8,
+		ConsumerGroupID:      "rt-gateway-fanout",
+		QueueTopic:           "jam.queue.events",
+		PlaybackTopic:        "jam.playback.events",
+		KafkaBootstrap:       "localhost:9092",
+		ConsumerBackend:      "kafka",
+		AllowedOrigins:       []string{"http://localhost:3000"},
+		RecoveryMaxRetries:   1,
+		RecoveryBackoff:      5 * time.Millisecond,
+		FeatureFanoutEnabled: true,
+	}
+
+	consumer := kafka.NewInMemoryConsumer(8)
+	app := NewApp(cfg, consumer)
+	testServer := httptest.NewServer(app.Handler())
+	defer testServer.Close()
+
+	consumeCtx, cancelConsume := context.WithCancel(context.Background())
+	defer cancelConsume()
+	consumerErrCh := make(chan error, 1)
+	go func() {
+		consumerErrCh <- app.StartConsumer(consumeCtx)
+	}()
+
+	wsURL := "ws" + strings.TrimPrefix(testServer.URL, "http") + "/ws?sessionId=jam_1"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"http://localhost:3000"}})
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	envelope, err := sharedevent.MarshalEnvelope(sharedevent.Envelope{
+		EventID:          "evt-end-to-end-1",
+		EventType:        "jam.queue.item.added",
+		SessionID:        "jam_1",
+		AggregateVersion: 1,
+		OccurredAt:       time.Now().UTC(),
+		Payload:          sharedevent.MustPayload(map[string]any{"trackId": "t1"}),
+	}, true)
+	if err != nil {
+		t.Fatalf("MarshalEnvelope() error = %v", err)
+	}
+
+	if ok := consumer.Publish(kafka.Record{Topic: cfg.QueueTopic, Value: envelope}); !ok {
+		t.Fatal("failed to publish test record to in-memory consumer")
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, message, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read websocket message: %v", err)
+	}
+
+	var outbound model.OutboundEvent
+	if err := json.Unmarshal(message, &outbound); err != nil {
+		t.Fatalf("decode outbound message: %v", err)
+	}
+	if outbound.SessionID != "jam_1" {
+		t.Fatalf("session mismatch: got %q want jam_1", outbound.SessionID)
+	}
+	if outbound.AggregateVersion != 1 {
+		t.Fatalf("aggregateVersion mismatch: got %d want 1", outbound.AggregateVersion)
+	}
+
+	cancelConsume()
+	if consumeErr := <-consumerErrCh; consumeErr != nil && consumeErr != context.Canceled {
+		t.Fatalf("StartConsumer() error = %v", consumeErr)
+	}
+}
+
 func TestReconnectStaleCursorReceivesSnapshotFallback(t *testing.T) {
 	t.Parallel()
 
@@ -98,6 +182,9 @@ func TestReconnectStaleCursorReceivesSnapshotFallback(t *testing.T) {
 		ConsumerGroupID:      "rt-gateway-fanout",
 		QueueTopic:           "jam.queue.events",
 		PlaybackTopic:        "jam.playback.events",
+		KafkaBootstrap:       "localhost:9092",
+		ConsumerBackend:      "noop",
+		AllowedOrigins:       []string{"http://localhost:3000"},
 		RecoveryMaxRetries:   1,
 		RecoveryBackoff:      5 * time.Millisecond,
 		FeatureFanoutEnabled: true,
@@ -110,7 +197,7 @@ func TestReconnectStaleCursorReceivesSnapshotFallback(t *testing.T) {
 	defer testServer.Close()
 
 	wsURL := "ws" + strings.TrimPrefix(testServer.URL, "http") + "/ws?sessionId=jam_1&lastSeenVersion=2"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"http://localhost:3000"}})
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}
@@ -131,5 +218,46 @@ func TestReconnectStaleCursorReceivesSnapshotFallback(t *testing.T) {
 	}
 	if !outbound.Recovery {
 		t.Fatal("expected recovery flag for snapshot fallback")
+	}
+
+}
+
+func TestWebsocketRejectsUnknownOrigin(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		ServerHost:           "127.0.0.1",
+		ServerPort:           0,
+		ReadHeaderTimeout:    5 * time.Second,
+		IdleTimeout:          30 * time.Second,
+		ShutdownTimeout:      5 * time.Second,
+		JamServiceURL:        "http://localhost:8080",
+		SnapshotTimeout:      500 * time.Millisecond,
+		FanoutBufferSize:     8,
+		ConsumerGroupID:      "rt-gateway-fanout",
+		QueueTopic:           "jam.queue.events",
+		PlaybackTopic:        "jam.playback.events",
+		KafkaBootstrap:       "localhost:9092",
+		ConsumerBackend:      "noop",
+		AllowedOrigins:       []string{"http://localhost:3000"},
+		RecoveryMaxRetries:   1,
+		RecoveryBackoff:      5 * time.Millisecond,
+		FeatureFanoutEnabled: true,
+	}
+
+	app := NewApp(cfg, kafka.NewNoopConsumer())
+	testServer := httptest.NewServer(app.Handler())
+	defer testServer.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(testServer.URL, "http") + "/ws?sessionId=jam_1"
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"https://evil.example"}})
+	if err == nil {
+		t.Fatal("expected websocket dial failure for forbidden origin")
+	}
+	if resp == nil {
+		t.Fatal("expected HTTP response for forbidden origin")
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status mismatch: got %d want %d", resp.StatusCode, http.StatusForbidden)
 	}
 }

@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"video-streaming/backend/jams/internal/auth"
@@ -12,6 +14,7 @@ import (
 	"video-streaming/backend/jams/internal/repository"
 	"video-streaming/backend/jams/internal/service"
 	sharedcatalog "video-streaming/backend/shared/catalog"
+	sharedkafka "video-streaming/backend/shared/kafka"
 )
 
 const swaggerUIHTML = `<!DOCTYPE html>
@@ -476,14 +479,48 @@ type healthResponse struct {
 }
 
 // NewRouter builds all HTTP routes for the backend service.
-func NewRouter(cfg config.Config) http.Handler {
+func NewRouter(cfg config.Config) (http.Handler, error) {
+	if err := cfg.ValidateRuntimePolicy(); err != nil {
+		return nil, err
+	}
+
 	mux := http.NewServeMux()
-	queueRepo := repository.NewRedisQueueRepository()
-	eventPublisher := &kafka.InMemoryPublisher{}
+	var queueRepo *repository.RedisQueueRepository
+	switch strings.ToLower(cfg.StateStoreBackend) {
+	case "inmemory":
+		queueRepo = repository.NewRedisQueueRepository()
+	case "redis", "postgres":
+		durableRepo, err := repository.NewDurableQueueRepository(cfg.StateStorePath)
+		if err != nil {
+			return nil, err
+		}
+		queueRepo = durableRepo
+	default:
+		return nil, fmt.Errorf("unsupported STATE_STORE_BACKEND: %s", cfg.StateStoreBackend)
+	}
+
+	var eventPublisher kafka.Publisher
+	switch strings.ToLower(cfg.KafkaTransport) {
+	case "kafka":
+		publisher, err := kafka.NewKafkaPublisher(cfg.KafkaBootstrapServers)
+		if err != nil {
+			return nil, err
+		}
+		eventPublisher = publisher
+	case "inmemory":
+		eventPublisher = &kafka.InMemoryPublisher{}
+	default:
+		eventPublisher = sharedkafka.NewNoOpsProducer()
+		return nil, fmt.Errorf("unsupported KAFKA_TRANSPORT: %s", cfg.KafkaTransport)
+	}
+
 	eventProducer := kafka.NewProducer(eventPublisher)
 	var catalogValidator sharedcatalog.Validator
 	if cfg.EnableCatalogValidation {
 		catalogValidator = sharedcatalog.NewHTTPValidator(cfg.CatalogServiceURL, cfg.CatalogTimeout)
+	}
+	if cfg.AuthValidationBackend != "http" {
+		return nil, fmt.Errorf("AUTH_VALIDATION_BACKEND=%s is not supported", cfg.AuthValidationBackend)
 	}
 	queueService := service.NewWithCatalogValidator(queueRepo, eventProducer, catalogValidator, cfg.EnableCatalogValidation)
 	authValidator := auth.NewHTTPValidator(cfg.AuthServiceURL, cfg.AuthTimeout)
@@ -493,7 +530,7 @@ func NewRouter(cfg config.Config) http.Handler {
 	mux.HandleFunc("/swagger/", swaggerUIHandler)
 	mux.HandleFunc("/swagger/openapi.json", openAPISpecHandler)
 	mux.Handle("/api/v1/jams/", jamsHandler)
-	return mux
+	return mux, nil
 }
 
 // swaggerUIHandler serves Swagger UI for interactive API testing.

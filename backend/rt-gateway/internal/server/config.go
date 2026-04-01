@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,10 +23,16 @@ const (
 	defaultRecoveryMaxRetries   = 3
 	defaultRecoveryBackoffMS    = 200
 	defaultFeatureFanoutEnabled = true
+	defaultRuntimeProfile       = "local"
+	defaultKafkaBootstrap       = "localhost:9092"
+	defaultConsumerBackend      = "in-memory"
+	defaultOriginAllowlist      = "http://localhost:3000,http://127.0.0.1:3000"
 )
 
 // Config contains runtime settings for realtime fanout.
 type Config struct {
+	RuntimeProfile string
+
 	ServerHost string
 	ServerPort int
 
@@ -38,8 +45,11 @@ type Config struct {
 	FanoutBufferSize int
 
 	ConsumerGroupID string
+	KafkaBootstrap  string
+	ConsumerBackend string
 	QueueTopic      string
 	PlaybackTopic   string
+	AllowedOrigins  []string
 
 	RecoveryMaxRetries int
 	RecoveryBackoff    time.Duration
@@ -103,7 +113,22 @@ func LoadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("parse FEATURE_REALTIME_FANOUT_ENABLED: %w", err)
 	}
 
-	return Config{
+	runtimeProfile := strings.ToLower(stringFromEnv("APP_ENV", defaultRuntimeProfile))
+	kafkaBootstrap := strings.TrimSpace(os.Getenv("KAFKA_BOOTSTRAP_SERVERS"))
+	if kafkaBootstrap == "" && runtimeProfile == "local" {
+		kafkaBootstrap = defaultKafkaBootstrap
+	}
+
+	consumerBackend := strings.ToLower(stringFromEnv("KAFKA_CONSUMER_BACKEND", defaultConsumerBackend))
+	originAllowlistRaw := strings.TrimSpace(os.Getenv("WS_ALLOWED_ORIGINS"))
+	if originAllowlistRaw == "" && runtimeProfile == "local" {
+		originAllowlistRaw = defaultOriginAllowlist
+	}
+	originAllowlist := parseCSV(originAllowlistRaw)
+
+	cfg := Config{
+		RuntimeProfile: runtimeProfile,
+
 		ServerHost: stringFromEnv("SERVER_HOST", defaultServerHost),
 		ServerPort: serverPort,
 
@@ -116,14 +141,43 @@ func LoadConfig() (Config, error) {
 		FanoutBufferSize: fanoutBufferSize,
 
 		ConsumerGroupID: stringFromEnv("KAFKA_CONSUMER_GROUP", defaultConsumerGroupID),
+		KafkaBootstrap:  kafkaBootstrap,
+		ConsumerBackend: consumerBackend,
 		QueueTopic:      stringFromEnv("KAFKA_TOPIC_QUEUE", defaultQueueTopic),
 		PlaybackTopic:   stringFromEnv("KAFKA_TOPIC_PLAYBACK", defaultPlaybackTopic),
+		AllowedOrigins:  originAllowlist,
 
 		RecoveryMaxRetries: recoveryMaxRetries,
 		RecoveryBackoff:    time.Duration(recoveryBackoffMS) * time.Millisecond,
 
 		FeatureFanoutEnabled: featureFanoutEnabled,
-	}, nil
+	}
+
+	if err := cfg.validateRuntimePolicy(); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+func (c Config) validateRuntimePolicy() error {
+	if c.ConsumerBackend != "kafka" && c.ConsumerBackend != "noop" {
+		return fmt.Errorf("invalid KAFKA_CONSUMER_BACKEND: %s", c.ConsumerBackend)
+	}
+
+	if c.RuntimeProfile != "test" && c.ConsumerBackend == "noop" {
+		return fmt.Errorf("KAFKA_CONSUMER_BACKEND=noop is allowed only in test profile")
+	}
+
+	if c.RuntimeProfile != "test" && strings.TrimSpace(c.KafkaBootstrap) == "" {
+		return fmt.Errorf("KAFKA_BOOTSTRAP_SERVERS is required for non-test profiles")
+	}
+
+	if c.RuntimeProfile != "test" && len(c.AllowedOrigins) == 0 {
+		return fmt.Errorf("WS_ALLOWED_ORIGINS is required for non-test profiles")
+	}
+
+	return nil
 }
 
 func stringFromEnv(key string, fallback string) string {
@@ -156,4 +210,20 @@ func boolFromEnv(key string, fallback bool) (bool, error) {
 		return false, fmt.Errorf("parse bool: %w", err)
 	}
 	return value, nil
+}
+
+func parseCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }

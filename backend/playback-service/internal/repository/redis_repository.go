@@ -29,8 +29,9 @@ type sessionState struct {
 
 // RedisPlaybackRepository stores session metadata using in-memory maps with Redis-like keys.
 type RedisPlaybackRepository struct {
-	mu       sync.Mutex
-	sessions map[string]*sessionState
+	mu          sync.Mutex
+	sessions    map[string]*sessionState
+	storagePath string
 }
 
 // NewRedisPlaybackRepository builds repository used by playback command pipeline.
@@ -38,6 +39,22 @@ func NewRedisPlaybackRepository() *RedisPlaybackRepository {
 	return &RedisPlaybackRepository{
 		sessions: make(map[string]*sessionState),
 	}
+}
+
+// NewDurablePlaybackRepository builds a playback repository with file-backed persistence.
+func NewDurablePlaybackRepository(storagePath string) (*RedisPlaybackRepository, error) {
+	repo := &RedisPlaybackRepository{
+		sessions:    make(map[string]*sessionState),
+		storagePath: storagePath,
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if err := repo.loadDurableStateLocked(); err != nil {
+		return nil, err
+	}
+
+	return repo, nil
 }
 
 // QueueMetadataKey returns Redis hash key format for queue metadata/version.
@@ -74,6 +91,9 @@ func (r *RedisPlaybackRepository) SeedSession(sessionID string, hostUserID strin
 	}
 	current.hostUserID = hostUserID
 	current.queueVersion = queueVersion
+	if err := r.saveDurableStateLocked(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -90,6 +110,9 @@ func (r *RedisPlaybackRepository) EndSession(sessionID string, endedBy string) e
 		return ErrInvalidSessionState
 	}
 	current.status = "ended"
+	if err := r.saveDurableStateLocked(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -157,6 +180,9 @@ func (r *RedisPlaybackRepository) ApplyCommand(sessionID string, command string,
 	}
 
 	current.aggregateVersion++
+	if err := r.saveDurableStateLocked(); err != nil {
+		return model.PlaybackTransition{}, err
+	}
 
 	return model.PlaybackTransition{
 		SessionID:        sessionID,

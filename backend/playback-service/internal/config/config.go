@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,10 +19,22 @@ const (
 	defaultCatalogServiceURL       = "http://localhost:8083"
 	defaultCatalogTimeoutSec       = 1
 	defaultEnableCatalogValidation = false
+	defaultRuntimeProfile          = "local"
+	defaultKafkaTransport          = "kafka"
+	defaultKafkaBootstrapServers   = "localhost:9092"
+	defaultStateStoreBackend       = "redis"
+	defaultStateStorePathLocal     = ".runtime/playback-state.json"
+	defaultAuthValidationBackend   = "http"
 )
 
 // Config contains runtime settings for playback-service.
 type Config struct {
+	RuntimeProfile          string
+	KafkaTransport          string
+	KafkaBootstrapServers   string
+	StateStoreBackend       string
+	StateStorePath          string
+	AuthValidationBackend   string
 	ServerHost              string
 	ServerPort              int
 	ReadHeaderTimeout       time.Duration
@@ -65,7 +78,26 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse ENABLE_CATALOG_VALIDATION: %w", err)
 	}
 
-	return Config{
+	runtimeProfile := strings.ToLower(stringFromEnv("APP_ENV", defaultRuntimeProfile))
+	kafkaTransport := strings.ToLower(stringFromEnv("KAFKA_TRANSPORT", defaultKafkaTransport))
+	stateStoreBackend := strings.ToLower(stringFromEnv("STATE_STORE_BACKEND", defaultStateStoreBackend))
+	stateStorePath := strings.TrimSpace(os.Getenv("STATE_STORE_PATH"))
+	if stateStorePath == "" && runtimeProfile == "local" && stateStoreBackend != "inmemory" {
+		stateStorePath = defaultStateStorePathLocal
+	}
+	kafkaBootstrap := strings.TrimSpace(os.Getenv("KAFKA_BOOTSTRAP_SERVERS"))
+	if kafkaBootstrap == "" && runtimeProfile == "local" {
+		kafkaBootstrap = defaultKafkaBootstrapServers
+	}
+
+	cfg := Config{
+		RuntimeProfile:        runtimeProfile,
+		KafkaTransport:        kafkaTransport,
+		KafkaBootstrapServers: kafkaBootstrap,
+		StateStoreBackend:     stateStoreBackend,
+		StateStorePath:        stateStorePath,
+		AuthValidationBackend: strings.ToLower(stringFromEnv("AUTH_VALIDATION_BACKEND", defaultAuthValidationBackend)),
+
 		ServerHost:              stringFromEnv("SERVER_HOST", defaultServerHost),
 		ServerPort:              serverPort,
 		ReadHeaderTimeout:       time.Duration(readHeaderSec) * time.Second,
@@ -76,7 +108,57 @@ func Load() (Config, error) {
 		CatalogServiceURL:       stringFromEnv("CATALOG_SERVICE_URL", defaultCatalogServiceURL),
 		CatalogTimeout:          time.Duration(catalogTimeoutSec) * time.Second,
 		EnableCatalogValidation: enableCatalogValidation,
-	}, nil
+	}
+
+	if err := cfg.ValidateRuntimePolicy(); err != nil {
+		return Config{}, err
+	}
+
+	return cfg, nil
+}
+
+func (c Config) ValidateRuntimePolicy() error {
+	if c.KafkaTransport != "kafka" && c.KafkaTransport != "inmemory" {
+		return fmt.Errorf("invalid KAFKA_TRANSPORT: %s", c.KafkaTransport)
+	}
+	if c.StateStoreBackend != "inmemory" && c.StateStoreBackend != "redis" && c.StateStoreBackend != "postgres" {
+		return fmt.Errorf("invalid STATE_STORE_BACKEND: %s", c.StateStoreBackend)
+	}
+	if c.StateStoreBackend != "inmemory" && strings.TrimSpace(c.StateStorePath) == "" {
+		return fmt.Errorf("STATE_STORE_PATH is required when STATE_STORE_BACKEND=%s", c.StateStoreBackend)
+	}
+	if c.AuthValidationBackend != "http" && c.AuthValidationBackend != "inmemory" {
+		return fmt.Errorf("invalid AUTH_VALIDATION_BACKEND: %s", c.AuthValidationBackend)
+	}
+	if strings.ToLower(strings.TrimSpace(c.RuntimeProfile)) != "test" && c.StateStoreBackend == "inmemory" {
+		return fmt.Errorf("STATE_STORE_BACKEND=inmemory is allowed only in test profile")
+	}
+
+	if isStrictRuntimeProfile(c.RuntimeProfile) {
+		if c.KafkaTransport != "kafka" {
+			return fmt.Errorf("KAFKA_TRANSPORT=inmemory is allowed only in test profile")
+		}
+		if strings.TrimSpace(c.KafkaBootstrapServers) == "" {
+			return fmt.Errorf("KAFKA_BOOTSTRAP_SERVERS is required for non-test profiles")
+		}
+		if c.AuthValidationBackend != "http" {
+			return fmt.Errorf("AUTH_VALIDATION_BACKEND must be http for non-test profiles")
+		}
+		if !c.EnableCatalogValidation {
+			return fmt.Errorf("ENABLE_CATALOG_VALIDATION must be true for non-test profiles")
+		}
+	}
+
+	return nil
+}
+
+func isStrictRuntimeProfile(profile string) bool {
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case "prod", "production", "staging":
+		return true
+	default:
+		return false
+	}
 }
 
 func stringFromEnv(key string, fallback string) string {

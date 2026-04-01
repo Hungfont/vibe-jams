@@ -22,7 +22,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	app := server.NewApp(cfg, gatewaykafka.NewNoopConsumer())
+	consumer, err := buildConsumer(cfg)
+	if err != nil {
+		slog.Error("failed to build consumer", "error", err)
+		os.Exit(1)
+	}
+
+	app := server.NewApp(cfg, consumer)
 	httpServer := &http.Server{
 		Addr:              net.JoinHostPort(cfg.ServerHost, fmt.Sprintf("%d", cfg.ServerPort)),
 		Handler:           app.Handler(),
@@ -67,4 +73,22 @@ func main() {
 	}
 
 	slog.Info("rt-gateway shut down cleanly")
+}
+
+func buildConsumer(cfg server.Config) (gatewaykafka.Consumer, error) {
+	switch cfg.ConsumerBackend {
+	case "kafka":
+		topics := []string{cfg.QueueTopic, cfg.PlaybackTopic}
+		consumer, err := gatewaykafka.NewKafkaConsumer(cfg.KafkaBootstrap, cfg.ConsumerGroupID, topics)
+		if err != nil {
+			return nil, err
+		}
+		return consumer, nil
+
+	case "in-memory":
+		return gatewaykafka.NewInMemoryConsumer(3000), nil
+
+	default:
+		return gatewaykafka.NewNoopConsumer(), nil
+	}
 }

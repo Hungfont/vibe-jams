@@ -64,3 +64,18 @@ func TestHTTPValidatorValidateTrackNotFound(t *testing.T) {
 		t.Fatalf("expected ErrTrackNotFound, got %v", err)
 	}
 }
+
+func TestHTTPValidatorDependencyUnavailableOnServerError(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer ts.Close()
+
+	validator := NewHTTPValidator(ts.URL, 2*time.Second)
+	_, err := validator.ValidateTrack(context.Background(), "trk_1")
+	if !errors.Is(err, ErrDependencyUnavailable) {
+		t.Fatalf("expected ErrDependencyUnavailable, got %v", err)
+	}
+}

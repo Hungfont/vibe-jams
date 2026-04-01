@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -104,6 +105,18 @@ func (a *App) handleWebsocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if !isOriginAllowed(origin, a.cfg.AllowedOrigins) {
+		slog.Warn("websocket origin rejected", "origin", origin)
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error": map[string]string{
+				"code":    "forbidden_origin",
+				"message": "origin is not allowed",
+			},
+		})
+		return
+	}
+
 	sessionID := r.URL.Query().Get("sessionId")
 	if !sessionIDPattern.MatchString(sessionID) {
 		http.Error(w, "invalid sessionId", http.StatusBadRequest)
@@ -161,6 +174,19 @@ func (a *App) handleWebsocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func isOriginAllowed(origin string, allowedOrigins []string) bool {
+	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		return false
+	}
+	for _, allowed := range allowedOrigins {
+		if strings.EqualFold(strings.TrimSpace(allowed), origin) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseLastSeenVersion(raw string) (int64, bool, error) {

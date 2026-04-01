@@ -1,26 +1,2 @@
 schema: spec-driven
-context: |
-	IMPORTANT: Always ensure the answer is concise and not too long. Also, always list the rules and skills being used before providing the answer.
-	ALWAYS APPLY CODE FOR BACKEND IF THERE ARE "BACKEND" KEYWORDS IN /opx-apply COMMAND.
-	ALWAYS ADD UPDATE SWAGGER IF THERE ARE SOME UPDATE/CREATE ON THE API.
-  ALLOWS ALL script that are started with openspec-** to run without asking for confirmation.
-
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
-
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
 

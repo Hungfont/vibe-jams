@@ -38,3 +38,29 @@ func TestParseLastSeenVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestIsOriginAllowed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		origin  string
+		allowed []string
+		want    bool
+	}{
+		{name: "match", origin: "http://localhost:3000", allowed: []string{"http://localhost:3000"}, want: true},
+		{name: "no match", origin: "https://evil.example", allowed: []string{"http://localhost:3000"}, want: false},
+		{name: "empty origin", origin: "", allowed: []string{"http://localhost:3000"}, want: false},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := isOriginAllowed(tt.origin, tt.allowed)
+			if got != tt.want {
+				t.Fatalf("isOriginAllowed() = %v want %v", got, tt.want)
+			}
+		})
+	}
+}

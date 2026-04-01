@@ -173,6 +173,46 @@ Validation evidence:
 5. `cd backend/jam-service && go test ./internal/handler -run TestAddQueueTrack -count=1`
 6. `cd backend/playback-service && go test ./internal/handler -run TestPlaybackCommand_Track -count=1`
 
+### Flow 8: Runtime Integration Policy and Origin Hardening (ES-P1-008)
+
+Steps:
+1. Load service configs with runtime profile and adapter policy fields (`APP_ENV`, Kafka backend settings, catalog/auth backend settings, websocket allowed origins).
+2. In non-test profiles, reject `STATE_STORE_BACKEND=inmemory` and require durable state path configuration.
+3. Build jam/playback repositories from durable backends (`redis`/`postgres` runtime modes) and persist state before command completion.
+4. Build jam/playback producers and rt-gateway consumer using Kafka transport backend.
+5. In profiles where Kafka transport is not selected as default, use shared `NoOpsProducer` and `NoOpsConsumer` from `backend/shared/kafka`.
+6. Enforce websocket origin allowlist in rt-gateway handshake before websocket upgrade.
+7. Map catalog/auth upstream dependency failures to deterministic dependency-unavailable semantics.
+8. Validate restart recovery by re-instantiating repositories from the same durable state file.
+9. Validate concurrent command consistency against durable adapters.
+
+Expected outcome:
+1. Invalid runtime adapter combinations fail startup deterministically before serving traffic.
+2. Local profile applies localhost Kafka fallback and deterministic durable state-store path defaults.
+3. Services that use non-Kafka transport defaults reuse shared noop transport implementations with consistent behavior.
+4. Session lifecycle, queue snapshot/version, idempotency records, and playback transition sequence survive repository restart.
+5. Concurrent queue adds and playback commands preserve consistent durable version progression.
+6. Unknown websocket origins are rejected with `403` and `forbidden_origin` payload.
+7. Catalog/auth 5xx and transport failures are mapped to deterministic dependency-unavailable errors.
+
+Edge cases:
+1. `KAFKA_CONSUMER_BACKEND=noop` is rejected outside test profile.
+2. Empty `WS_ALLOWED_ORIGINS` is rejected outside test profile.
+3. `STATE_STORE_BACKEND=inmemory` is rejected outside test profile.
+4. Idempotent queue-add retry after restart returns cached prior result and does not duplicate items.
+
+Validation evidence:
+1. `cd backend/jam-service && go test ./...`
+2. `cd backend/playback-service && go test ./...`
+3. `cd backend/rt-gateway && go test ./...`
+4. `cd backend/shared && go test ./kafka -run TestNoOps -count=1`
+5. `cd backend/rt-gateway && go test ./internal/kafka -run TestNoopConsumerStartReturnsContextCanceled -count=1`
+6. `cd backend/jam-service && go test ./internal/repository -run TestDurableQueueRepository_RestartRecoversSessionQueueAndIdempotency -count=1`
+7. `cd backend/playback-service && go test ./internal/repository -run TestDurablePlaybackRepository_RestartRecoversTransitions -count=1`
+8. `cd backend/jam-service && go test ./internal/repository -run TestDurableQueueRepository_ConcurrentAddsRemainConsistent -count=1`
+9. `cd backend/playback-service && go test ./internal/repository -run TestDurablePlaybackRepository_ConcurrentCommandsRemainConsistent -count=1`
+10. `cd backend/rt-gateway && go test ./internal/server -run TestWebsocketFanout_EndToEndViaConsumerLoop -count=1`
+
 ## Assumptions Logged
 
 1. This baseline excludes proposed but not-yet-implemented flows.

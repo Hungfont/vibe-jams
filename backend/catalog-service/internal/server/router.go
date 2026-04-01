@@ -2,9 +2,11 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
+	"video-streaming/backend/catalog-service/internal/config"
 	"video-streaming/backend/catalog-service/internal/handler"
 	"video-streaming/backend/catalog-service/internal/repository"
 )
@@ -16,12 +18,25 @@ type healthResponse struct {
 }
 
 // NewRouter builds all catalog-service routes.
-func NewRouter() http.Handler {
+func NewRouter(cfg config.Config) (http.Handler, error) {
+	if err := cfg.ValidateRuntimePolicy(); err != nil {
+		return nil, err
+	}
+
 	mux := http.NewServeMux()
-	catalogHandler := handler.NewHTTPHandler(repository.NewInMemoryStore())
+
+	var store repository.Store
+	switch cfg.CatalogBackend {
+	case "inmemory":
+		store = repository.NewInMemoryStore()
+	default:
+		return nil, fmt.Errorf("CATALOG_SOURCE_BACKEND=%s is not yet implemented", cfg.CatalogBackend)
+	}
+
+	catalogHandler := handler.NewHTTPHandler(store)
 	mux.Handle("/internal/v1/catalog/tracks/", catalogHandler)
 	mux.HandleFunc("/healthz", healthzHandler)
-	return mux
+	return mux, nil
 }
 
 func healthzHandler(w http.ResponseWriter, r *http.Request) {

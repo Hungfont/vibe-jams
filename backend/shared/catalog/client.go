@@ -16,6 +16,8 @@ var (
 	ErrTrackNotFound = errors.New("track not found")
 	// ErrTrackUnavailable indicates the track exists but cannot be played.
 	ErrTrackUnavailable = errors.New("track unavailable")
+	// ErrDependencyUnavailable indicates catalog integration dependency is unavailable.
+	ErrDependencyUnavailable = errors.New("catalog dependency unavailable")
 )
 
 // LookupResponse defines the shared catalog track validation contract.
@@ -66,7 +68,7 @@ func (v *HTTPValidator) ValidateTrack(ctx context.Context, trackID string) (Look
 
 	resp, err := v.client.Do(req)
 	if err != nil {
-		return LookupResponse{}, fmt.Errorf("call catalog-service: %w", err)
+		return LookupResponse{}, fmt.Errorf("%w: %v", ErrDependencyUnavailable, err)
 	}
 	defer resp.Body.Close()
 
@@ -89,6 +91,9 @@ func (v *HTTPValidator) ValidateTrack(ctx context.Context, trackID string) (Look
 		}
 		return out, nil
 	default:
+		if resp.StatusCode >= http.StatusInternalServerError {
+			return LookupResponse{}, ErrDependencyUnavailable
+		}
 		return LookupResponse{}, fmt.Errorf("unexpected catalog status: %d", resp.StatusCode)
 	}
 }

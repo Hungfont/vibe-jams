@@ -49,6 +49,7 @@ type RedisQueueRepository struct {
 	mu                  sync.Mutex
 	jams                map[string]*jamQueueState
 	nextSessionSequence int64
+	storagePath         string
 }
 
 // NewRedisQueueRepository builds a repository implementation used by queue service.
@@ -56,6 +57,22 @@ func NewRedisQueueRepository() *RedisQueueRepository {
 	return &RedisQueueRepository{
 		jams: make(map[string]*jamQueueState),
 	}
+}
+
+// NewDurableQueueRepository builds a repository with file-backed persistence.
+func NewDurableQueueRepository(storagePath string) (*RedisQueueRepository, error) {
+	repo := &RedisQueueRepository{
+		jams:        make(map[string]*jamQueueState),
+		storagePath: storagePath,
+	}
+
+	repo.mu.Lock()
+	defer repo.mu.Unlock()
+	if err := repo.loadDurableStateLocked(); err != nil {
+		return nil, err
+	}
+
+	return repo, nil
 }
 
 // QueueItemsKey returns Redis list key format for ordered queue items.
@@ -102,11 +119,14 @@ func (r *RedisQueueRepository) CreateSession(hostUserID string) (model.SessionSn
 		sessionVersion:    1,
 		status:            model.SessionStatusActive,
 		hostUserID:        hostUserID,
-		participants: map[string]model.SessionRole {
+		participants: map[string]model.SessionRole{
 			hostUserID: model.SessionRoleHost,
 		},
 	}
 	r.jams[jamID] = state
+	if err := r.saveDurableStateLocked(); err != nil {
+		return model.SessionSnapshot{}, err
+	}
 	return buildSessionSnapshot(jamID, state), nil
 }
 
@@ -125,6 +145,9 @@ func (r *RedisQueueRepository) JoinSession(jamID string, userID string) (model.S
 	if _, exists := state.participants[userID]; !exists {
 		state.participants[userID] = model.SessionRoleMember
 		state.sessionVersion++
+		if err := r.saveDurableStateLocked(); err != nil {
+			return model.SessionSnapshot{}, err
+		}
 	}
 
 	return buildSessionSnapshot(jamID, state), nil
@@ -153,11 +176,17 @@ func (r *RedisQueueRepository) LeaveSession(jamID string, userID string) (model.
 		state.endCause = "host_leave"
 		state.endedBy = userID
 		state.sessionVersion++
+		if err := r.saveDurableStateLocked(); err != nil {
+			return model.SessionSnapshot{}, err
+		}
 		return buildSessionSnapshot(jamID, state), nil
 	}
 
 	delete(state.participants, userID)
 	state.sessionVersion++
+	if err := r.saveDurableStateLocked(); err != nil {
+		return model.SessionSnapshot{}, err
+	}
 	return buildSessionSnapshot(jamID, state), nil
 }
 
@@ -181,6 +210,9 @@ func (r *RedisQueueRepository) EndSession(jamID string, actorUserID string) (mod
 	state.endCause = "host_request"
 	state.endedBy = actorUserID
 	state.sessionVersion++
+	if err := r.saveDurableStateLocked(); err != nil {
+		return model.SessionSnapshot{}, err
+	}
 	return buildSessionSnapshot(jamID, state), nil
 }
 
@@ -245,6 +277,9 @@ func (r *RedisQueueRepository) Add(jamID string, req model.AddQueueItemRequest) 
 		Items:        cloneItems(state.items),
 	}
 	state.idempotencyResult[req.IdempotencyKey] = addResult{snapshot: snapshot}
+	if err := r.saveDurableStateLocked(); err != nil {
+		return model.QueueSnapshot{}, false, err
+	}
 	return cloneSnapshot(snapshot), false, nil
 }
 
@@ -269,6 +304,9 @@ func (r *RedisQueueRepository) Remove(jamID string, itemID string) (model.QueueS
 
 	state.items = append(state.items[:index], state.items[index+1:]...)
 	state.queueVersion++
+	if err := r.saveDurableStateLocked(); err != nil {
+		return model.QueueSnapshot{}, err
+	}
 
 	return model.QueueSnapshot{
 		JamID:        jamID,
@@ -318,6 +356,9 @@ func (r *RedisQueueRepository) Reorder(jamID string, expectedVersion int64, item
 
 	state.items = reordered
 	state.queueVersion++
+	if err := r.saveDurableStateLocked(); err != nil {
+		return model.QueueSnapshot{}, err
+	}
 
 	return model.QueueSnapshot{
 		JamID:        jamID,
