@@ -11,6 +11,7 @@ import (
 	"video-streaming/backend/playback-service/internal/kafka"
 	"video-streaming/backend/playback-service/internal/repository"
 	"video-streaming/backend/playback-service/internal/service"
+	sharedcatalog "video-streaming/backend/shared/catalog"
 )
 
 const swaggerUIHTML = `<!DOCTYPE html>
@@ -143,6 +144,7 @@ const openAPISpec = `{
         "type": "object",
         "properties": {
           "command": { "type": "string" },
+          "trackId": { "type": "string" },
           "clientEventId": { "type": "string" },
           "expectedQueueVersion": { "type": "integer", "format": "int64" },
           "positionMs": { "type": "integer", "format": "int64" }
@@ -191,7 +193,11 @@ func NewRouter(cfg config.Config) http.Handler {
 
 	publisher := &kafka.InMemoryPublisher{}
 	producer := kafka.NewProducer(publisher)
-	playbackService := service.New(repo, producer)
+	var catalogValidator sharedcatalog.Validator
+	if cfg.EnableCatalogValidation {
+		catalogValidator = sharedcatalog.NewHTTPValidator(cfg.CatalogServiceURL, cfg.CatalogTimeout)
+	}
+	playbackService := service.NewWithCatalogValidator(repo, producer, catalogValidator, cfg.EnableCatalogValidation)
 	authValidator := auth.NewHTTPValidator(cfg.AuthServiceURL, cfg.AuthTimeout)
 	playbackHandler := handler.NewHTTPHandler(playbackService, authValidator)
 

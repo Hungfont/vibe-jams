@@ -13,6 +13,7 @@ import (
 	"video-streaming/backend/playback-service/internal/repository"
 	"video-streaming/backend/playback-service/internal/service"
 	sharedauth "video-streaming/backend/shared/auth"
+	sharedcatalog "video-streaming/backend/shared/catalog"
 	sharedevent "video-streaming/backend/shared/event"
 	sharedkafka "video-streaming/backend/shared/kafka"
 )
@@ -20,6 +21,17 @@ import (
 type stubValidator struct {
 	claims sharedauth.Claims
 	err    error
+}
+
+type stubCatalogValidator struct {
+	err error
+}
+
+func (s stubCatalogValidator) ValidateTrack(_ context.Context, _ string) (sharedcatalog.LookupResponse, error) {
+	if s.err != nil {
+		return sharedcatalog.LookupResponse{}, s.err
+	}
+	return sharedcatalog.LookupResponse{TrackID: "trk_ok", IsPlayable: true}, nil
 }
 
 func (s stubValidator) ValidateBearerToken(_ context.Context, _ string) (sharedauth.Claims, error) {
@@ -232,5 +244,91 @@ func TestPlaybackCommand_EndedSessionRejectedAndNoPublish(t *testing.T) {
 	}
 	if errorBody.Error.Code != "session_ended" {
 		t.Fatalf("error code mismatch: got %q want session_ended", errorBody.Error.Code)
+	}
+}
+
+func TestPlaybackCommand_TrackNotFoundRejectedAndNoPublish(t *testing.T) {
+	t.Parallel()
+
+	repo := repository.NewRedisPlaybackRepository()
+	if err := repo.SeedSession("jam_1", "host_1", 7); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	pub := &kafka.InMemoryPublisher{}
+	svc := service.NewWithCatalogValidator(repo, kafka.NewProducer(pub), stubCatalogValidator{err: sharedcatalog.ErrTrackNotFound}, true)
+	h := NewHTTPHandler(svc, stubValidator{
+		claims: sharedauth.Claims{
+			UserID:       "host_1",
+			Plan:         "premium",
+			SessionState: sharedauth.SessionStateValid,
+		},
+	})
+
+	body := []byte(`{"command":"play","trackId":"trk_missing","clientEventId":"evt_nf","expectedQueueVersion":7}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/jam/sessions/jam_1/playback/commands", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-host-valid")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusNotFound)
+	}
+	if len(pub.Records) != 0 {
+		t.Fatalf("expected no published record, got %d", len(pub.Records))
+	}
+
+	var errorBody struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&errorBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if errorBody.Error.Code != "track_not_found" {
+		t.Fatalf("error code mismatch: got %q want track_not_found", errorBody.Error.Code)
+	}
+}
+
+func TestPlaybackCommand_TrackUnavailableRejectedAndNoPublish(t *testing.T) {
+	t.Parallel()
+
+	repo := repository.NewRedisPlaybackRepository()
+	if err := repo.SeedSession("jam_1", "host_1", 7); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	pub := &kafka.InMemoryPublisher{}
+	svc := service.NewWithCatalogValidator(repo, kafka.NewProducer(pub), stubCatalogValidator{err: sharedcatalog.ErrTrackUnavailable}, true)
+	h := NewHTTPHandler(svc, stubValidator{
+		claims: sharedauth.Claims{
+			UserID:       "host_1",
+			Plan:         "premium",
+			SessionState: sharedauth.SessionStateValid,
+		},
+	})
+
+	body := []byte(`{"command":"play","trackId":"trk_blocked","clientEventId":"evt_un","expectedQueueVersion":7}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/jam/sessions/jam_1/playback/commands", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer token-host-valid")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusConflict)
+	}
+	if len(pub.Records) != 0 {
+		t.Fatalf("expected no published record, got %d", len(pub.Records))
+	}
+
+	var errorBody struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&errorBody); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if errorBody.Error.Code != "track_unavailable" {
+		t.Fatalf("error code mismatch: got %q want track_unavailable", errorBody.Error.Code)
 	}
 }

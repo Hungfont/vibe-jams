@@ -203,6 +203,22 @@ use (
 // go work use ./shared/models
 // go work sync
 ```
+## Avoid Package-Level State
+// Bad: Global mutable state
+var db *sql.DB
+
+func init() {
+    db, _ = sql.Open("postgres", os.Getenv("DATABASE_URL"))
+}
+
+// Good: Dependency injection
+type Server struct {
+    db *sql.DB
+}
+
+func NewServer(db *sql.DB) *Server {
+    return &Server{db: db}
+}
 
 ## Makefile Example
 

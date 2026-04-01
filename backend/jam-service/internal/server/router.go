@@ -11,6 +11,7 @@ import (
 	"video-streaming/backend/jams/internal/kafka"
 	"video-streaming/backend/jams/internal/repository"
 	"video-streaming/backend/jams/internal/service"
+	sharedcatalog "video-streaming/backend/shared/catalog"
 )
 
 const swaggerUIHTML = `<!DOCTYPE html>
@@ -480,7 +481,11 @@ func NewRouter(cfg config.Config) http.Handler {
 	queueRepo := repository.NewRedisQueueRepository()
 	eventPublisher := &kafka.InMemoryPublisher{}
 	eventProducer := kafka.NewProducer(eventPublisher)
-	queueService := service.New(queueRepo, eventProducer)
+	var catalogValidator sharedcatalog.Validator
+	if cfg.EnableCatalogValidation {
+		catalogValidator = sharedcatalog.NewHTTPValidator(cfg.CatalogServiceURL, cfg.CatalogTimeout)
+	}
+	queueService := service.NewWithCatalogValidator(queueRepo, eventProducer, catalogValidator, cfg.EnableCatalogValidation)
 	authValidator := auth.NewHTTPValidator(cfg.AuthServiceURL, cfg.AuthTimeout)
 	jamsHandler := handler.NewHTTPHandler(queueService, authValidator)
 	mux.HandleFunc("/healthz", healthzHandler)

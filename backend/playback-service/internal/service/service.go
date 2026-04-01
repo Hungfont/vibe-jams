@@ -8,6 +8,7 @@ import (
 
 	"video-streaming/backend/playback-service/internal/model"
 	"video-streaming/backend/playback-service/internal/repository"
+	sharedcatalog "video-streaming/backend/shared/catalog"
 )
 
 var (
@@ -19,6 +20,10 @@ var (
 	ErrSessionEnded = errors.New("session ended")
 	// ErrVersionConflict indicates expected queue version is stale.
 	ErrVersionConflict = errors.New("version conflict")
+	// ErrTrackNotFound indicates the requested track does not exist.
+	ErrTrackNotFound = errors.New("track not found")
+	// ErrTrackUnavailable indicates the requested track cannot be played.
+	ErrTrackUnavailable = errors.New("track unavailable")
 )
 
 // StateRepository abstracts queue/playback metadata persistence.
@@ -36,13 +41,25 @@ type EventProducer interface {
 
 // Service orchestrates command validation, execution, and event emission.
 type Service struct {
-	repo   StateRepository
-	events EventProducer
+	repo                     StateRepository
+	events                   EventProducer
+	catalogValidator         sharedcatalog.Validator
+	catalogValidationEnabled bool
 }
 
 // New builds a playback command service with injected dependencies.
 func New(repo StateRepository, events EventProducer) *Service {
-	return &Service{repo: repo, events: events}
+	return NewWithCatalogValidator(repo, events, nil, false)
+}
+
+// NewWithCatalogValidator builds a playback service with optional catalog pre-checks.
+func NewWithCatalogValidator(repo StateRepository, events EventProducer, catalogValidator sharedcatalog.Validator, enabled bool) *Service {
+	return &Service{
+		repo:                     repo,
+		events:                   events,
+		catalogValidator:         catalogValidator,
+		catalogValidationEnabled: enabled,
+	}
 }
 
 // ExecuteCommand validates request, enforces host policy, and emits transition event.
@@ -55,6 +72,9 @@ func (s *Service) ExecuteCommand(ctx context.Context, sessionID string, actorUse
 	}
 	if err := req.Validate(); err != nil {
 		return model.CommandAcceptedResponse{}, fmt.Errorf("%w: %v", ErrInvalidRequest, err)
+	}
+	if err := s.validateTrack(ctx, req.TrackID); err != nil {
+		return model.CommandAcceptedResponse{}, err
 	}
 	status, err := s.repo.SessionStatus(sessionID)
 	if err != nil {
@@ -102,6 +122,29 @@ func (s *Service) ExecuteCommand(ctx context.Context, sessionID string, actorUse
 	return model.CommandAcceptedResponse{Accepted: true}, nil
 }
 
+func (s *Service) validateTrack(ctx context.Context, trackID string) error {
+	if !s.catalogValidationEnabled || s.catalogValidator == nil {
+		return nil
+	}
+	if strings.TrimSpace(trackID) == "" {
+		return nil
+	}
+
+	_, err := s.catalogValidator.ValidateTrack(ctx, trackID)
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, sharedcatalog.ErrTrackNotFound) {
+		return ErrTrackNotFound
+	}
+	if errors.Is(err, sharedcatalog.ErrTrackUnavailable) {
+		return ErrTrackUnavailable
+	}
+
+	return err
+}
+
 // IsInvalidRequest reports whether validation failed.
 func IsInvalidRequest(err error) bool {
 	return errors.Is(err, ErrInvalidRequest) || errors.Is(err, model.ErrInvalidCommand)
@@ -120,6 +163,16 @@ func IsVersionConflict(err error) bool {
 // IsNotFound reports whether session state is missing.
 func IsNotFound(err error) bool {
 	return errors.Is(err, repository.ErrSessionNotFound)
+}
+
+// IsTrackNotFound reports whether command failed due to unknown track.
+func IsTrackNotFound(err error) bool {
+	return errors.Is(err, ErrTrackNotFound)
+}
+
+// IsTrackUnavailable reports whether command failed due to unavailable track.
+func IsTrackUnavailable(err error) bool {
+	return errors.Is(err, ErrTrackUnavailable)
 }
 
 // IsSessionEnded reports whether command is blocked by ended state.

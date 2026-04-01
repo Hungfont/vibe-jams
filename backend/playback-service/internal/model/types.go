@@ -22,6 +22,7 @@ var (
 // PlaybackCommandRequest defines the payload for command endpoint.
 type PlaybackCommandRequest struct {
 	Command              string `json:"command"`
+	TrackID              string `json:"trackId,omitempty"`
 	ClientEventID        string `json:"clientEventId"`
 	ExpectedQueueVersion int64  `json:"expectedQueueVersion"`
 	PositionMS           int64  `json:"positionMs,omitempty"`

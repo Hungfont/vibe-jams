@@ -7,6 +7,7 @@ import (
 
 	"video-streaming/backend/jams/internal/model"
 	"video-streaming/backend/jams/internal/repository"
+	sharedcatalog "video-streaming/backend/shared/catalog"
 )
 
 var (
@@ -14,6 +15,10 @@ var (
 	ErrInvalidRequest = errors.New("invalid request")
 	// ErrSessionEnded indicates write attempted on ended session.
 	ErrSessionEnded = errors.New("session ended")
+	// ErrTrackNotFound indicates the requested track does not exist.
+	ErrTrackNotFound = errors.New("track not found")
+	// ErrTrackUnavailable indicates the requested track cannot be played.
+	ErrTrackUnavailable = errors.New("track unavailable")
 )
 
 // QueueRepository abstracts queue persistence for service business logic.
@@ -39,13 +44,25 @@ type EventProducer interface {
 
 // Service orchestrates queue command validation and mutation behavior.
 type Service struct {
-	repo   QueueRepository
-	events EventProducer
+	repo                     QueueRepository
+	events                   EventProducer
+	catalogValidator         sharedcatalog.Validator
+	catalogValidationEnabled bool
 }
 
 // New builds a queue service instance with injected repository dependency.
 func New(repo QueueRepository, events EventProducer) *Service {
-	return &Service{repo: repo, events: events}
+	return NewWithCatalogValidator(repo, events, nil, false)
+}
+
+// NewWithCatalogValidator builds a queue service with optional catalog pre-checks.
+func NewWithCatalogValidator(repo QueueRepository, events EventProducer, catalogValidator sharedcatalog.Validator, enabled bool) *Service {
+	return &Service{
+		repo:                     repo,
+		events:                   events,
+		catalogValidator:         catalogValidator,
+		catalogValidationEnabled: enabled,
+	}
 }
 
 // CreateSession starts a new jam session owned by host user.
@@ -148,6 +165,9 @@ func (s *Service) Add(jamID string, req model.AddQueueItemRequest) (model.QueueS
 	if err := s.repo.EnsureSessionActive(jamID); err != nil {
 		return model.QueueSnapshot{}, false, err
 	}
+	if err := s.validateTrack(context.Background(), req.TrackID); err != nil {
+		return model.QueueSnapshot{}, false, err
+	}
 
 	snapshot, fromCache, err := s.repo.Add(jamID, req)
 	if err != nil {
@@ -161,6 +181,26 @@ func (s *Service) Add(jamID string, req model.AddQueueItemRequest) (model.QueueS
 	}
 
 	return snapshot, fromCache, nil
+}
+
+func (s *Service) validateTrack(ctx context.Context, trackID string) error {
+	if !s.catalogValidationEnabled || s.catalogValidator == nil {
+		return nil
+	}
+
+	_, err := s.catalogValidator.ValidateTrack(ctx, trackID)
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, sharedcatalog.ErrTrackNotFound) {
+		return ErrTrackNotFound
+	}
+	if errors.Is(err, sharedcatalog.ErrTrackUnavailable) {
+		return ErrTrackUnavailable
+	}
+
+	return err
 }
 
 // Remove validates and removes an existing queue item.
@@ -253,6 +293,16 @@ func IsSessionEnded(err error) bool {
 // IsInvalidRequest reports whether an error is a validation failure.
 func IsInvalidRequest(err error) bool {
 	return errors.Is(err, ErrInvalidRequest) || errors.Is(err, repository.ErrIdempotencyKeyRequired)
+}
+
+// IsTrackNotFound reports whether track lookup failed with not-found semantics.
+func IsTrackNotFound(err error) bool {
+	return errors.Is(err, ErrTrackNotFound)
+}
+
+// IsTrackUnavailable reports whether track lookup failed with unavailable semantics.
+func IsTrackUnavailable(err error) bool {
+	return errors.Is(err, ErrTrackUnavailable)
 }
 
 func (s *Service) publishMutationEvents(jamID string, queueVersion int64, queueEventType string, payload any) error {

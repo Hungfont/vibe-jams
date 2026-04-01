@@ -94,6 +94,10 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case service.IsInvalidRequest(err):
 		apierror.Write(w, http.StatusBadRequest, apierror.CodeInvalidInput, err.Error())
+	case service.IsTrackNotFound(err):
+		apierror.Write(w, http.StatusNotFound, apierror.CodeTrackNotFound, "track not found")
+	case service.IsTrackUnavailable(err):
+		apierror.Write(w, http.StatusConflict, apierror.CodeTrackUnavailable, "track unavailable")
 	case service.IsHostOnly(err):
 		apierror.Write(w, http.StatusForbidden, apierror.CodeHostOnly, "host only command")
 	case service.IsVersionConflict(err):

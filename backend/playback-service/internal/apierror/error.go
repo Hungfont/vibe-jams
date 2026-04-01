@@ -16,6 +16,10 @@ const (
 	CodeVersionConflict = "version_conflict"
 	// CodeSessionEnded is returned when command targets ended session.
 	CodeSessionEnded = "session_ended"
+	// CodeTrackNotFound is returned when referenced track does not exist.
+	CodeTrackNotFound = "track_not_found"
+	// CodeTrackUnavailable is returned when referenced track is unavailable.
+	CodeTrackUnavailable = "track_unavailable"
 	// CodeNotFound is returned when requested session context is missing.
 	CodeNotFound = "not_found"
 	// CodeInternalError is returned on unexpected server failures.
