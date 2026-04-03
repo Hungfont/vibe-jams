@@ -22,11 +22,11 @@ The `catalog-service` SHALL return a deterministic not-found result for unknown 
 - **THEN** the response maps to deterministic `track_not_found` semantics for callers
 
 ### Requirement: Contract schema MUST remain stable across integrations
-The catalog track validation response SHALL be covered by contract tests consumed by `jam-service` and `playback-service`.
+The catalog track validation response SHALL be covered by contract tests consumed by `jam-service`, `playback-service`, and `api-service` BFF orchestration flows.
 
 #### Scenario: Contract test validates response schema
 - **WHEN** contract tests run for catalog lookup integration
-- **THEN** required fields and deterministic error semantics match the shared contract expected by command services
+- **THEN** required fields and deterministic error semantics match the shared contract expected by command services and API-service BFF orchestration
 
 ### Requirement: Runtime catalog validation SHALL use real dependency integration
 Catalog validation in non-test profiles SHALL resolve track lookup through configured runtime catalog integration and MUST NOT use in-memory-only source.
