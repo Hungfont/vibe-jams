@@ -13,6 +13,16 @@ Archive a completed change in the experimental workflow.
 
 **Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
 
+**Custom agent context binding (required)**
+
+Use Agent context by default for archive orchestration and delta-spec sync checks.
+If archive workflow requires pre-archive implementation follow-up, switch to matching domain context and load mapped resources:
+- Frontend: `.github/rules/frontend/**`, `.github/instructions/frontend/fe-*.instructions.md`, relevant frontend skills
+- Backend: `.github/rules/backend/**`, `.github/instructions/backend/be-*.instructions.md`, relevant backend skills
+- Agent: `.github/rules/common/**`, OpenSpec skills
+
+Report selected context and loaded paths before archive execution.
+
 **Steps**
 
 1. **If no change name provided, prompt for selection**

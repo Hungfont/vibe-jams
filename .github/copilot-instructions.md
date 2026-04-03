@@ -10,7 +10,7 @@ Use the correct specialist agent based on task domain.
 - Use for: UI components, pages, styling, responsiveness, frontend integration and tests.
 - Code scope: only update frontend/** unless user explicitly asks for override.
 - Rules scope: read only .github/rules/frontend/** when that folder has relevant files.
-- Instruction scope: use only .github/instructions/frontend/fe-*.md unless user explicitly asks for override.
+- ALWAYS use instructions from .github/instructions/frontend/fe-*.instructions.md unless user explicitly asks for override.
 
 ### Backend Agent
 - Agent: Backend Engineer
@@ -18,7 +18,7 @@ Use the correct specialist agent based on task domain.
 - Use for: backend APIs, handlers, repositories, Kafka, config, and backend tests.
 - Code scope: only update backend/** unless user explicitly asks for override.
 - Rules scope: read only .github/rules/backend/**.
-- Instruction scope: use only .github/instructions/be-*.md unless user explicitly asks for override.
+- Instruction scope: use only .github/instructions/backend/be-*.instructions.md unless user explicitly asks for override.
 
 ## Code Update Policy
 
@@ -32,3 +32,32 @@ Use the correct specialist agent based on task domain.
 - Keep existing public contracts stable unless change is requested.
 - Prefer small, focused patches over broad refactors.
 - Run relevant validation for the edited domain before completion.
+
+## OpenSpec Setup By Custom Agent
+
+When running `/opsx:explore`, `/opsx:propose`, `/opsx:apply`, or `/opsx:archive`, select one execution agent first and load resources from the mapped paths below.
+
+### 1) Frontend Engineer
+- Trigger: change scope is primarily `frontend/**`, UI flows, Next.js routing, styling, or frontend integration tests.
+- Rules: `.github/rules/frontend/**` (optionally `.github/rules/common/**` for shared security or patterns).
+- Instructions: `.github/instructions/frontend/fe-*.instructions.md`.
+- Skills: `.github/skills/nextjs-app-router-patterns/SKILL.md`, `.github/skills/tailwind-design-system/SKILL.md`, `.github/skills/tdd-workflow/SKILL.md` when relevant.
+- Prompts: `.github/prompt/frontend/*.prompt.md` when generating or updating frontend instruction assets.
+
+### 2) Backend Engineer
+- Trigger: change scope is primarily `backend/**`, APIs, handlers, repositories, Kafka, config, or backend tests.
+- Rules: `.github/rules/backend/**` (optionally `.github/rules/common/**` for shared security or patterns).
+- Instructions: `.github/instructions/backend/be-*.instructions.md`.
+- Skills: `.github/skills/golang-patterns/SKILL.md`, `.github/skills/kafka-engineer/SKILL.md`, `.github/skills/redis-best-practices/SKILL.md`, `.github/skills/tdd-workflow/SKILL.md` when relevant.
+- Prompts: use workspace prompts if backend prompt assets are added later.
+
+### 3) Agent (default / orchestration)
+- Trigger: OpenSpec artifact work (`openspec/**`), cross-domain planning, archive or workflow coordination.
+- Rules: `.github/rules/common/**` and domain rules only for files being changed.
+- Instructions: load only domain instructions tied to impacted files.
+- Skills: `.github/skills/openspec-explore/SKILL.md`, `.github/skills/openspec-propose/SKILL.md`, `.github/skills/openspec-apply-change/SKILL.md`, `.github/skills/openspec-archive-change/SKILL.md`.
+- Prompts: use domain prompts only when generating prompt-driven artifacts.
+
+### Execution policy
+- Do not mix frontend and backend implementation in one pass unless explicitly requested.
+- If OpenSpec tasks span both domains, split implementation by agent/domain and report boundaries clearly.

@@ -13,6 +13,15 @@ Implement tasks from an OpenSpec change.
 
 **Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
 
+**Custom agent context binding (required before implementation)**
+
+Resolve execution context by changed code scope, then load mapped resources:
+- Frontend scope (`frontend/**`): Frontend Engineer context with `.github/rules/frontend/**`, `.github/instructions/frontend/fe-*.instructions.md`, and relevant frontend skills.
+- Backend scope (`backend/**`): Backend Engineer context with `.github/rules/backend/**`, `.github/instructions/backend/be-*.instructions.md`, and relevant backend skills.
+- OpenSpec-only or cross-domain orchestration: Agent context with `.github/rules/common/**` and OpenSpec skills.
+
+Announce selected context and loaded paths before starting tasks.
+
 **Steps**
 
 1. **Select the change**

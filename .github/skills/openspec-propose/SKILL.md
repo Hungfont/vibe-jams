@@ -22,6 +22,15 @@ When ready to implement, run /opsx:apply
 
 **Input**: The user's request should include a change name (kebab-case) OR a description of what they want to build.
 
+**Custom agent context binding (required before artifact generation)**
+
+Resolve the expected implementation domain and load mapped resources:
+- Frontend proposals: Frontend Engineer context (`.github/rules/frontend/**`, `.github/instructions/frontend/fe-*.instructions.md`, relevant frontend skills/prompts).
+- Backend proposals: Backend Engineer context (`.github/rules/backend/**`, `.github/instructions/backend/be-*.instructions.md`, relevant backend skills).
+- OpenSpec-only or cross-domain proposals: Agent context (`.github/rules/common/**`, OpenSpec skills).
+
+Report selected context and source paths before generating artifacts.
+
 **Steps**
 
 1. **If no clear input provided, ask what they want to build**

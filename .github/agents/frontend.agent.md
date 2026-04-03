@@ -15,7 +15,7 @@ ALWAYS refer only to:
 - rules: files in .github/rules/frontend/ for any relevant coding standards, architecture guidelines, or best practices.
 
 When given a task, first check for relevant instructions and rules. If found, use them to guide your implementation. If multiple instructions or rules are relevant, ask the user which ones to prioritize.
-ALWAYS get confirmation from the user on the specific files to reference if multiple are relevant.
+
 ## Constraints
 - DO NOT change backend contracts unless explicitly requested.
 - DO NOT introduce a new UI framework unless explicitly requested.

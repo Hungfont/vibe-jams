@@ -15,6 +15,15 @@ Enter explore mode. Think deeply. Visualize freely. Follow the conversation wher
 
 **This is a stance, not a workflow.** There are no fixed steps, no required sequence, no mandatory outputs. You're a thinking partner helping the user explore.
 
+## Custom Agent Context Binding
+
+Before exploration, activate the right custom agent context and load only matching resources:
+- Frontend Engineer context for frontend/UI exploration (`.github/rules/frontend/**`, `.github/instructions/frontend/fe-*.instructions.md`, relevant frontend skills/prompts).
+- Backend Engineer context for backend/service exploration (`.github/rules/backend/**`, `.github/instructions/backend/be-*.instructions.md`, relevant backend skills).
+- Agent context for OpenSpec artifact and cross-domain exploration (`.github/rules/common/**`, OpenSpec skills).
+
+Announce the selected context and loaded resource paths at exploration start.
+
 ---
 
 ## The Stance

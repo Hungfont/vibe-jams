@@ -18,6 +18,18 @@ When ready to implement, run /opsx:apply
 
 **Input**: The argument after `/opsx:propose` is the change name (kebab-case), OR a description of what the user wants to build.
 
+**Agent context setup (required before artifact generation)**
+
+1. Resolve execution agent by proposed scope:
+   - Frontend Engineer for `frontend/**` and UI-focused changes
+   - Backend Engineer for `backend/**` and API/service changes
+   - Agent (default) for OpenSpec-only or cross-domain orchestration
+2. Load mapped resources for the selected agent:
+   - Frontend: `.github/rules/frontend/**`, `.github/instructions/frontend/fe-*.instructions.md`, relevant frontend skills, frontend prompts when needed
+   - Backend: `.github/rules/backend/**`, `.github/instructions/backend/be-*.instructions.md`, relevant backend skills
+   - Agent: `.github/rules/common/**`, OpenSpec skills
+3. Announce selected agent and loaded paths before generating artifacts.
+
 **Steps**
 
 1. **If no input provided, ask what they want to build**

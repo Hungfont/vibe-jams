@@ -242,6 +242,30 @@ Validation evidence:
 5. `cd backend/api-service && go test ./internal/bff -run TestHTTPAuthClientValidateBearerToken -count=1`
 6. `cd backend/api-service && go test ./internal/bff -run TestHTTPCatalogClientLookupTrack -count=1`
 
+### Flow 10: Frontend Phase 1 Jam UI Routing and API Boundary
+
+Steps:
+1. Open Lobby page (`/`) and validate create/join actions call frontend API routes only.
+2. Create a jam and verify redirect to `/jam/{jamId}`.
+3. On Jam Room page, verify queue/playback/participants/diagnostics sections render from orchestration state.
+4. Trigger queue and playback interactions and confirm client calls stay within `/api/*` route boundary.
+5. Verify realtime bootstrap uses `/api/realtime/ws-config` before websocket connect.
+
+Expected outcome:
+1. Lobby and Jam Room render without compile/runtime errors.
+2. Browser-side callers use frontend API routes only (no direct backend service URL usage).
+3. Room UI surfaces degraded or blocking errors in diagnostics and alerts when present.
+4. Queue and playback controls enforce host/session-ended guard behavior at UI level.
+
+Edge cases:
+1. Invalid jam ID in lobby join form is rejected client-side.
+2. Realtime degraded bootstrap keeps room usable with periodic state refresh fallback.
+
+Validation evidence:
+1. `cd frontend && npm run lint`
+2. `cd frontend && npm run build`
+3. `cd frontend && npm test`
+
 ## Assumptions Logged
 
 1. This baseline excludes proposed but not-yet-implemented flows.
