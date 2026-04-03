@@ -11,6 +11,16 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/coverage/
+frontend/.vercel/
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+# frontend/public/*
 # Go build/test artifacts
 bin/
 dist/
