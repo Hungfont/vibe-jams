@@ -21,21 +21,17 @@ Enter explore mode. Think deeply. Visualize freely. Follow the conversation wher
 ## Agent Context Setup (Required)
 
 Before deep exploration, resolve which custom agent context should be active and load only matching resources:
-
+- ALWAYS load relevant skills FIRST.
 - **Frontend Engineer context** for `frontend/**` and UI exploration:
-   - Rules: `.github/rules/frontend/**`
+   - Rules: `.github/rules/frontend/**`, add `.github/rules/common/**` if needed
    - Instructions: `.github/instructions/frontend/fe-*.instructions.md`
    - Skills (as needed): `nextjs-app-router-patterns`, `tailwind-design-system`, `tdd-workflow`
    - Prompts: `.github/prompt/frontend/*.prompt.md` when prompt assets are involved
 
 - **Backend Engineer context** for `backend/**` and service exploration:
-   - Rules: `.github/rules/backend/**`
+   - Rules: `.github/rules/backend/**`, add `.github/rules/common/**` if needed
    - Instructions: `.github/instructions/backend/be-*.instructions.md`
    - Skills (as needed): `golang-patterns`, `kafka-engineer`, `redis-best-practices`, `tdd-workflow`
-
-- **Agent context (default)** for OpenSpec artifact and cross-domain exploration:
-   - Rules: `.github/rules/common/**` and only impacted domain rules
-   - Skills: `openspec-explore`, `openspec-propose`, `openspec-apply-change`, `openspec-archive-change`
 
 Announce the active context and loaded sources at the start of exploration.
 

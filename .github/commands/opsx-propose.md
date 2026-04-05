@@ -23,11 +23,10 @@ When ready to implement, run /opsx:apply
 1. Resolve execution agent by proposed scope:
    - Frontend Engineer for `frontend/**` and UI-focused changes
    - Backend Engineer for `backend/**` and API/service changes
-   - Agent (default) for OpenSpec-only or cross-domain orchestration
 2. Load mapped resources for the selected agent:
-   - Frontend: `.github/rules/frontend/**`, `.github/instructions/frontend/fe-*.instructions.md`, relevant frontend skills, frontend prompts when needed
-   - Backend: `.github/rules/backend/**`, `.github/instructions/backend/be-*.instructions.md`, relevant backend skills
-   - Agent: `.github/rules/common/**`, OpenSpec skills
+   - ALWAYS load relevant skills FIRST.
+   - Frontend: `.github/rules/frontend/**`, add `.github/rules/common/**` if needed, `.github/instructions/frontend/fe-*.instructions.md`, relevant frontend skills, frontend prompts when needed
+   - Backend: `.github/rules/backend/**`add `.github/rules/common/, `.github/instructions/backend/be-*.instructions.md`, relevant backend skills
 3. Announce selected agent and loaded paths before generating artifacts.
 
 **Steps**

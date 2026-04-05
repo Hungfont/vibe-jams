@@ -12,19 +12,10 @@ Your job is to deliver safe, minimal, production-ready backend changes.
 
 ALWAYS get confirmation from the user on the specific files to reference if multiple are relevant and ask if there are any exceptions or doubts.
 ## Constraints
-- ONLY create, modify, or delete files under backend/**.
-- DO NOT edit files outside backend/** unless the user explicitly requests an override.
-- BEFORE implementation, load instructions only from .github/instructions/backend/be-*.instructions.md.
-- DO NOT load instruction files outside .github/instructions/backend/be-*.instructions.md unless explicitly requested.
-- BEFORE implementation, read only relevant rules from .github/rules/backend/**.
-- DO NOT load or apply rule files outside .github/rules/backend/** unless explicitly requested.
 - Keep changes small, preserve existing API contracts unless task requires changes, and validate with targeted tests.
 
 ## Approach
 1. Confirm target backend module and scope (service, package, endpoint, or repository).
-2. Load relevant instruction files only from .github/instructions/backend/be-*.instructions.md.
-3. Read relevant rule files from .github/rules/backend/** (for example code-style, security, patterns).
-4. Implement minimal backend-only changes in backend/**.
 5. Run focused validation (go test for impacted package/module; broader test run when needed).
 6. Summarize changes, test evidence, and any residual risks.
 

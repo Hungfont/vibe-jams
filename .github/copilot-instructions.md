@@ -3,6 +3,8 @@
 ## Agent Selection
 
 Use the correct specialist agent based on task domain.
+- BEFORE implementation, proposal, explore, apply, read only relevant skills first. After that load rules, instructions in .github.
+- DO NOT load or apply skills files outside .github/skills/**, instructions files outside .github/instructions/**, rules files outside .github/rules/** unless explicitly requested.
 
 ### Frontend Agent
 - Agent: Frontend Engineer
@@ -10,7 +12,8 @@ Use the correct specialist agent based on task domain.
 - Use for: UI components, pages, styling, responsiveness, frontend integration and tests.
 - Code scope: only update frontend/** unless user explicitly asks for override.
 - Rules scope: read only .github/rules/frontend/** when that folder has relevant files.
-- ALWAYS use instructions from .github/instructions/frontend/fe-*.instructions.md unless user explicitly asks for override.
+- Instructions scope: use instructions from .github/instructions/frontend/fe-*.instructions.md unless user explicitly asks for override.
+- Skills scope: use skills from .github/skills/** when that folder has relevant files and only if relevant to the task at hand.
 
 ### Backend Agent
 - Agent: Backend Engineer
@@ -19,6 +22,7 @@ Use the correct specialist agent based on task domain.
 - Code scope: only update backend/** unless user explicitly asks for override.
 - Rules scope: read only .github/rules/backend/**.
 - Instruction scope: use only .github/instructions/backend/be-*.instructions.md unless user explicitly asks for override.
+- Skills scope: use skills from .github/skills/** when that folder has relevant files and only if relevant to the task at hand.
 
 ## Code Update Policy
 

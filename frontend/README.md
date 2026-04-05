@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend (Bun)
 
-## Getting Started
+This frontend is configured to use Bun as the package manager and script runner.
 
-First, run the development server:
+## 1) Install Bun
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+### Windows (PowerShell)
+
+```powershell
+irm bun.sh/install.ps1 | iex
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+If your antivirus blocks the script, allow Bun installer execution in your security settings and run the command again.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Verify installation:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```powershell
+bun --version
+```
 
-## Learn More
+## 2) Install dependencies
 
-To learn more about Next.js, take a look at the following resources:
+From the `frontend/` directory:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+bun install
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+This will generate `bun.lock` and install dependencies in `node_modules/`.
 
-## Deploy on Vercel
+## 3) Run project commands
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+bun dev
+bun run build
+bun run start
+bun run lint
+bun test
+bun run test:watch
+bun run test:coverage
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+App URL: [http://localhost:3000](http://localhost:3000)

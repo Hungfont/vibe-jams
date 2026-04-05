@@ -29,17 +29,18 @@ Implement tasks from an OpenSpec change.
 
     Then load the corresponding resources:
     - **Frontend Engineer**:
-       - Rules: `.github/rules/frontend/**` (plus `.github/rules/common/**` when needed)
-       - Instructions: `.github/instructions/frontend/fe-*.instructions.md`
        - Skills (as needed): `nextjs-app-router-patterns`, `tailwind-design-system`, `tdd-workflow`
+       - Rules: `.github/rules/frontend/**` (plus `.github/rules/common/**` when needed)
+       - Instructions: `.github/instructions/frontend/fe-*.instructions.md`, Only loading for this agents.
        - Prompts: `.github/prompt/frontend/*.prompt.md` when generating instruction assets
     - **Backend Engineer**:
+       - Skills (as needed): `golang-patterns`, `kafka-engineer`, `redis-best-practices`, `tdd-workflow`
        - Rules: `.github/rules/backend/**` (plus `.github/rules/common/**` when needed)
        - Instructions: `.github/instructions/backend/be-*.instructions.md`
-       - Skills (as needed): `golang-patterns`, `kafka-engineer`, `redis-best-practices`, `tdd-workflow`
     - **Agent (default)**:
-       - Rules: `.github/rules/common/**` and domain rules only for impacted files
-       - Skills: `openspec-explore`, `openspec-propose`, `openspec-apply-change`, `openspec-archive-change`
+       - Auto load specific relevants agents via tasks.
+       - Auto load the relevants files for skills first before implementation.
+       - Load relevants rules, and instructions.
 
     Announce selected agent and loaded resource paths before coding.
 
