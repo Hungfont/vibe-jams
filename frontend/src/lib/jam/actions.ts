@@ -1,6 +1,7 @@
 import type { ApiEnvelope } from "@/lib/api/types";
-import type { QueueSnapshot } from "@/lib/jam/types";
+import type { QueueSnapshot, SessionSnapshot } from "@/lib/jam/types";
 import {
+  moderationCommandSchema,
   queueAddSchema,
   queueRemoveSchema,
   queueReorderSchema,
@@ -67,4 +68,46 @@ export async function reorderQueue(jamId: string, payload: unknown): Promise<Api
   });
 
   return (await response.json()) as ApiEnvelope<QueueSnapshot>;
+}
+
+export async function muteParticipant(jamId: string, payload: unknown): Promise<ApiEnvelope<SessionSnapshot>> {
+  const parsed = moderationCommandSchema.safeParse(payload);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: {
+        code: "invalid_input",
+        message: "invalid mute payload",
+      },
+    };
+  }
+
+  const response = await fetch(`/api/jam/${encodeURIComponent(jamId)}/moderation/mute`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parsed.data),
+  });
+
+  return (await response.json()) as ApiEnvelope<SessionSnapshot>;
+}
+
+export async function kickParticipant(jamId: string, payload: unknown): Promise<ApiEnvelope<SessionSnapshot>> {
+  const parsed = moderationCommandSchema.safeParse(payload);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: {
+        code: "invalid_input",
+        message: "invalid kick payload",
+      },
+    };
+  }
+
+  const response = await fetch(`/api/jam/${encodeURIComponent(jamId)}/moderation/kick`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parsed.data),
+  });
+
+  return (await response.json()) as ApiEnvelope<SessionSnapshot>;
 }

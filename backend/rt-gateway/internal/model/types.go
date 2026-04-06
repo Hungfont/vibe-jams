@@ -6,6 +6,7 @@ import "time"
 type SessionParticipant struct {
 	UserID string `json:"userId"`
 	Role   string `json:"role"`
+	Muted  bool   `json:"muted,omitempty"`
 }
 
 // SessionSnapshot is the lifecycle read model used for recovery snapshots.

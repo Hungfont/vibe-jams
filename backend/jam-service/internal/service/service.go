@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"video-streaming/backend/jams/internal/model"
 	"video-streaming/backend/jams/internal/repository"
@@ -19,6 +20,8 @@ var (
 	ErrTrackNotFound = errors.New("track not found")
 	// ErrTrackUnavailable indicates the requested track cannot be played.
 	ErrTrackUnavailable = errors.New("track unavailable")
+	// ErrModerationBlocked indicates actor is blocked by moderation policy.
+	ErrModerationBlocked = errors.New("moderation blocked")
 )
 
 // QueueRepository abstracts queue persistence for service business logic.
@@ -31,15 +34,19 @@ type QueueRepository interface {
 	EnsureSessionActive(jamID string) error
 
 	Add(jamID string, req model.AddQueueItemRequest) (model.QueueSnapshot, bool, error)
-	Remove(jamID string, itemID string) (model.QueueSnapshot, error)
-	Reorder(jamID string, expectedVersion int64, itemIDs []string) (model.QueueSnapshot, error)
+	Remove(jamID string, itemID string, actorUserID string) (model.QueueSnapshot, error)
+	Reorder(jamID string, expectedVersion int64, itemIDs []string, actorUserID string) (model.QueueSnapshot, error)
 	Snapshot(jamID string) (model.QueueSnapshot, error)
+
+	MuteParticipant(jamID string, actorUserID string, req model.ModerationCommandRequest) (model.SessionSnapshot, error)
+	KickParticipant(jamID string, actorUserID string, req model.ModerationCommandRequest) (model.SessionSnapshot, error)
 }
 
 // EventProducer abstracts queue/session event publishing.
 type EventProducer interface {
 	PublishQueueEvent(ctx context.Context, sessionID string, aggregateVersion int64, eventType string, payload any) error
 	PublishSessionEvent(ctx context.Context, sessionID string, aggregateVersion int64, eventType string, payload any) error
+	PublishModerationEvent(ctx context.Context, sessionID string, aggregateVersion int64, eventType string, payload any) error
 }
 
 // Service orchestrates queue command validation and mutation behavior.
@@ -171,6 +178,9 @@ func (s *Service) Add(jamID string, req model.AddQueueItemRequest) (model.QueueS
 
 	snapshot, fromCache, err := s.repo.Add(jamID, req)
 	if err != nil {
+		if errors.Is(err, repository.ErrModerationBlocked) {
+			return model.QueueSnapshot{}, false, ErrModerationBlocked
+		}
 		return model.QueueSnapshot{}, false, err
 	}
 	if err := s.publishMutationEvents(jamID, snapshot.QueueVersion, "jam.queue.item.added", map[string]any{
@@ -205,15 +215,18 @@ func (s *Service) validateTrack(ctx context.Context, trackID string) error {
 
 // Remove validates and removes an existing queue item.
 func (s *Service) Remove(jamID string, req model.RemoveQueueItemRequest) (model.QueueSnapshot, error) {
-	if jamID == "" || req.ItemID == "" {
-		return model.QueueSnapshot{}, fmt.Errorf("%w: jamId and itemId are required", ErrInvalidRequest)
+	if jamID == "" || req.ItemID == "" || req.ActorUserID == "" {
+		return model.QueueSnapshot{}, fmt.Errorf("%w: jamId, itemId and actorUserId are required", ErrInvalidRequest)
 	}
 	if err := s.repo.EnsureSessionActive(jamID); err != nil {
 		return model.QueueSnapshot{}, err
 	}
 
-	snapshot, err := s.repo.Remove(jamID, req.ItemID)
+	snapshot, err := s.repo.Remove(jamID, req.ItemID, req.ActorUserID)
 	if err != nil {
+		if errors.Is(err, repository.ErrModerationBlocked) {
+			return model.QueueSnapshot{}, ErrModerationBlocked
+		}
 		return model.QueueSnapshot{}, err
 	}
 	if err := s.publishMutationEvents(jamID, snapshot.QueueVersion, "jam.queue.item.removed", map[string]any{
@@ -227,8 +240,8 @@ func (s *Service) Remove(jamID string, req model.RemoveQueueItemRequest) (model.
 
 // Reorder validates request and applies optimistic concurrency semantics.
 func (s *Service) Reorder(jamID string, req model.ReorderQueueRequest) (model.QueueSnapshot, error) {
-	if jamID == "" {
-		return model.QueueSnapshot{}, fmt.Errorf("%w: jamId is required", ErrInvalidRequest)
+	if jamID == "" || req.ActorUserID == "" {
+		return model.QueueSnapshot{}, fmt.Errorf("%w: jamId and actorUserId are required", ErrInvalidRequest)
 	}
 	if len(req.ItemIDs) == 0 {
 		return model.QueueSnapshot{}, fmt.Errorf("%w: itemIds is required", ErrInvalidRequest)
@@ -237,8 +250,11 @@ func (s *Service) Reorder(jamID string, req model.ReorderQueueRequest) (model.Qu
 		return model.QueueSnapshot{}, err
 	}
 
-	snapshot, err := s.repo.Reorder(jamID, req.ExpectedQueueVersion, req.ItemIDs)
+	snapshot, err := s.repo.Reorder(jamID, req.ExpectedQueueVersion, req.ItemIDs, req.ActorUserID)
 	if err != nil {
+		if errors.Is(err, repository.ErrModerationBlocked) {
+			return model.QueueSnapshot{}, ErrModerationBlocked
+		}
 		return model.QueueSnapshot{}, err
 	}
 	if err := s.publishMutationEvents(jamID, snapshot.QueueVersion, "jam.queue.reordered", map[string]any{
@@ -290,9 +306,16 @@ func IsSessionEnded(err error) bool {
 	return errors.Is(err, ErrSessionEnded) || errors.Is(err, repository.ErrSessionEnded)
 }
 
+// IsModerationBlocked reports whether actor is blocked by moderation policy.
+func IsModerationBlocked(err error) bool {
+	return errors.Is(err, ErrModerationBlocked) || errors.Is(err, repository.ErrModerationBlocked)
+}
+
 // IsInvalidRequest reports whether an error is a validation failure.
 func IsInvalidRequest(err error) bool {
-	return errors.Is(err, ErrInvalidRequest) || errors.Is(err, repository.ErrIdempotencyKeyRequired)
+	return errors.Is(err, ErrInvalidRequest) ||
+		errors.Is(err, repository.ErrIdempotencyKeyRequired) ||
+		errors.Is(err, repository.ErrModerationTargetInvalid)
 }
 
 // IsTrackNotFound reports whether track lookup failed with not-found semantics.
@@ -318,4 +341,56 @@ func (s *Service) publishMutationEvents(jamID string, queueVersion int64, queueE
 	return s.events.PublishSessionEvent(ctx, jamID, queueVersion, "jam.session.updated", map[string]any{
 		"queueVersion": queueVersion,
 	})
+}
+
+// MuteParticipant marks one participant as muted and emits moderation audit event.
+func (s *Service) MuteParticipant(ctx context.Context, jamID string, actorUserID string, req model.ModerationCommandRequest) (model.SessionSnapshot, error) {
+	if jamID == "" || actorUserID == "" || req.TargetUserID == "" {
+		return model.SessionSnapshot{}, fmt.Errorf("%w: jamId, actor user and target user are required", ErrInvalidRequest)
+	}
+
+	snapshot, err := s.repo.MuteParticipant(jamID, actorUserID, req)
+	if err != nil {
+		return model.SessionSnapshot{}, err
+	}
+
+	if s.events != nil {
+		if err := s.events.PublishModerationEvent(ctx, jamID, snapshot.SessionVersion, "jam.moderation.muted", map[string]any{
+			"action":       "mute",
+			"actorUserId":  actorUserID,
+			"targetUserId": req.TargetUserID,
+			"reason":       req.Reason,
+			"occurredAt":   time.Now().UTC(),
+		}); err != nil {
+			return model.SessionSnapshot{}, err
+		}
+	}
+
+	return snapshot, nil
+}
+
+// KickParticipant removes one participant and emits moderation audit event.
+func (s *Service) KickParticipant(ctx context.Context, jamID string, actorUserID string, req model.ModerationCommandRequest) (model.SessionSnapshot, error) {
+	if jamID == "" || actorUserID == "" || req.TargetUserID == "" {
+		return model.SessionSnapshot{}, fmt.Errorf("%w: jamId, actor user and target user are required", ErrInvalidRequest)
+	}
+
+	snapshot, err := s.repo.KickParticipant(jamID, actorUserID, req)
+	if err != nil {
+		return model.SessionSnapshot{}, err
+	}
+
+	if s.events != nil {
+		if err := s.events.PublishModerationEvent(ctx, jamID, snapshot.SessionVersion, "jam.moderation.kicked", map[string]any{
+			"action":       "kick",
+			"actorUserId":  actorUserID,
+			"targetUserId": req.TargetUserID,
+			"reason":       req.Reason,
+			"occurredAt":   time.Now().UTC(),
+		}); err != nil {
+			return model.SessionSnapshot{}, err
+		}
+	}
+
+	return snapshot, nil
 }

@@ -24,6 +24,7 @@ const (
 type SessionParticipant struct {
 	UserID string      `json:"userId"`
 	Role   SessionRole `json:"role"`
+	Muted  bool        `json:"muted,omitempty"`
 }
 
 // SessionSnapshot describes persisted jam session metadata and participants.
@@ -67,11 +68,19 @@ type AddQueueItemRequest struct {
 
 // RemoveQueueItemRequest defines request payload for queue-remove endpoint.
 type RemoveQueueItemRequest struct {
-	ItemID string `json:"itemId"`
+	ItemID      string `json:"itemId"`
+	ActorUserID string `json:"actorUserId,omitempty"`
 }
 
 // ReorderQueueRequest defines request payload for queue-reorder endpoint.
 type ReorderQueueRequest struct {
 	ItemIDs              []string `json:"itemIds"`
 	ExpectedQueueVersion int64    `json:"expectedQueueVersion"`
+	ActorUserID          string   `json:"actorUserId,omitempty"`
+}
+
+// ModerationCommandRequest defines payload for moderation commands.
+type ModerationCommandRequest struct {
+	TargetUserID string `json:"targetUserId"`
+	Reason       string `json:"reason,omitempty"`
 }

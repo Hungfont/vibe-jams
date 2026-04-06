@@ -20,6 +20,7 @@ const (
 	defaultConsumerGroupID      = "rt-gateway-fanout"
 	defaultQueueTopic           = "jam.queue.events"
 	defaultPlaybackTopic        = "jam.playback.events"
+	defaultModerationTopic      = "jam.moderation.events"
 	defaultRecoveryMaxRetries   = 3
 	defaultRecoveryBackoffMS    = 200
 	defaultFeatureFanoutEnabled = true
@@ -49,6 +50,7 @@ type Config struct {
 	ConsumerBackend string
 	QueueTopic      string
 	PlaybackTopic   string
+	ModerationTopic string
 	AllowedOrigins  []string
 
 	RecoveryMaxRetries int
@@ -145,6 +147,7 @@ func LoadConfig() (Config, error) {
 		ConsumerBackend: consumerBackend,
 		QueueTopic:      stringFromEnv("KAFKA_TOPIC_QUEUE", defaultQueueTopic),
 		PlaybackTopic:   stringFromEnv("KAFKA_TOPIC_PLAYBACK", defaultPlaybackTopic),
+		ModerationTopic: stringFromEnv("KAFKA_TOPIC_MODERATION", defaultModerationTopic),
 		AllowedOrigins:  originAllowlist,
 
 		RecoveryMaxRetries: recoveryMaxRetries,

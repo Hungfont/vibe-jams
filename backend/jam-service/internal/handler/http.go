@@ -55,6 +55,17 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if jamID, action, ok := parseJamModerationRoute(r.URL.Path); ok {
+		switch action {
+		case "mute":
+			h.handleMute(jamID, w, r)
+			return
+		case "kick":
+			h.handleKick(jamID, w, r)
+			return
+		}
+	}
+
 	jamID, action, ok := parseJamQueueRoute(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
@@ -159,10 +170,16 @@ func (h *HTTPHandler) handleAdd(jamID string, w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	claims, ok := h.authorize(r.Context(), w, r, false)
+	if !ok {
+		return
+	}
+
 	var req model.AddQueueItemRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	req.AddedBy = claims.UserID
 
 	snapshot, replayed, err := h.service.Add(jamID, req)
 	if err != nil {
@@ -183,10 +200,16 @@ func (h *HTTPHandler) handleRemove(jamID string, w http.ResponseWriter, r *http.
 		return
 	}
 
+	claims, ok := h.authorize(r.Context(), w, r, false)
+	if !ok {
+		return
+	}
+
 	var req model.RemoveQueueItemRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	req.ActorUserID = claims.UserID
 
 	snapshot, err := h.service.Remove(jamID, req)
 	if err != nil {
@@ -204,10 +227,16 @@ func (h *HTTPHandler) handleReorder(jamID string, w http.ResponseWriter, r *http
 		return
 	}
 
+	claims, ok := h.authorize(r.Context(), w, r, false)
+	if !ok {
+		return
+	}
+
 	var req model.ReorderQueueRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	req.ActorUserID = claims.UserID
 
 	snapshot, err := h.service.Reorder(jamID, req)
 	if err != nil {
@@ -265,6 +294,58 @@ func (h *HTTPHandler) handleState(jamID string, w http.ResponseWriter, r *http.R
 	})
 }
 
+// handleMute mutes one participant in active session.
+func (h *HTTPHandler) handleMute(jamID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	claims, ok := h.authorize(r.Context(), w, r, false)
+	if !ok {
+		return
+	}
+
+	var req model.ModerationCommandRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	snapshot, err := h.service.MuteParticipant(r.Context(), jamID, claims.UserID, req)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
+// handleKick removes one participant from active session.
+func (h *HTTPHandler) handleKick(jamID string, w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	claims, ok := h.authorize(r.Context(), w, r, false)
+	if !ok {
+		return
+	}
+
+	var req model.ModerationCommandRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	snapshot, err := h.service.KickParticipant(r.Context(), jamID, claims.UserID, req)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
 // decodeJSON parses JSON body and writes a consistent 400 response on errors.
 func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(r.Body)
@@ -306,6 +387,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		apierror.Write(w, http.StatusNotFound, apierror.CodeNotFound, err.Error())
 	case service.IsHostOnly(err):
 		apierror.Write(w, http.StatusForbidden, apierror.CodeHostOnly, "host only command")
+	case service.IsModerationBlocked(err):
+		apierror.Write(w, http.StatusForbidden, apierror.CodeModerationBlocked, "blocked by moderation")
 	case service.IsSessionEnded(err):
 		apierror.Write(w, http.StatusConflict, apierror.CodeSessionEnded, "session has ended")
 	default:
@@ -387,6 +470,30 @@ func parseJamSessionActionRoute(path string) (jamID string, action string, ok bo
 	switch parts[1] {
 	case "join", "leave", "end", "state":
 		return parts[0], parts[1], true
+	default:
+		return "", "", false
+	}
+}
+
+// parseJamModerationRoute extracts jam ID and moderation action from /api/v1/jams/{jamId}/moderation/{action}.
+func parseJamModerationRoute(path string) (jamID string, action string, ok bool) {
+	const prefix = "/api/v1/jams/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", "", false
+	}
+
+	trimmed := strings.TrimPrefix(path, prefix)
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 3 || parts[1] != "moderation" {
+		return "", "", false
+	}
+	if parts[0] == "" || parts[2] == "" {
+		return "", "", false
+	}
+
+	switch parts[2] {
+	case "mute", "kick":
+		return parts[0], parts[2], true
 	default:
 		return "", "", false
 	}

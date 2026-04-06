@@ -29,11 +29,11 @@ import { ToastStack } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/use-toast";
 import type { ApiEnvelope } from "@/lib/api/types";
-import { addQueueItem, removeQueueItem, reorderQueue } from "@/lib/jam/actions";
+import { addQueueItem, kickParticipant, muteParticipant, removeQueueItem, reorderQueue } from "@/lib/jam/actions";
 import { endJamSession, executePlayback, fetchJamState, fetchOrchestration, fetchRealtimeWsConfig } from "@/lib/jam/client";
 import { BLOCKING_CODES, type RoomTab } from "@/lib/jam/constants";
 import { isSnapshotRecovery, reduceRealtimeVersion, type RoomRealtimeEvent } from "@/lib/jam/realtime";
-import type { BffOrchestrationData, QueueSnapshot } from "@/lib/jam/types";
+import type { BffOrchestrationData, QueueSnapshot, SessionSnapshot } from "@/lib/jam/types";
 
 interface JamRoomClientProps {
   jamId: string;
@@ -69,6 +69,7 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
   const [activeTab, setActiveTab] = React.useState<RoomTab>(initialView);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [positionMs, setPositionMs] = React.useState(0);
+  const [moderationReason, setModerationReason] = React.useState("");
   const [localError, setLocalError] = React.useState(initialError?.message ?? "");
   const [connectionState, setConnectionState] = React.useState("disconnected");
   const [pendingPlayback, setPendingPlayback] = React.useState<string | null>(null);
@@ -293,6 +294,49 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
     await refreshSnapshot();
   }, [jamId, refreshSnapshot, toast]);
 
+  const handleModeration = React.useCallback(
+    async (action: "mute" | "kick", targetUserId: string) => {
+      if (!room || !isHost || isEnded) {
+        return;
+      }
+
+      const payload = {
+        targetUserId,
+        reason: moderationReason.trim() ? moderationReason.trim() : undefined,
+      };
+      const response: ApiEnvelope<SessionSnapshot> =
+        action === "mute"
+          ? await muteParticipant(jamId, payload)
+          : await kickParticipant(jamId, payload);
+
+      if (!response.success || !response.data) {
+        setLocalError(response.error?.message ?? `Unable to ${action} participant`);
+        toast({ title: `${action} failed`, description: response.error?.message, variant: "error" });
+        return;
+      }
+      const sessionSnapshot = response.data;
+
+      swr.mutate(
+        (current) => {
+          if (!current) {
+            return current;
+          }
+          return {
+            ...current,
+            sessionState: {
+              ...current.sessionState,
+              session: sessionSnapshot,
+              aggregateVersion: Math.max(current.sessionState.aggregateVersion, sessionSnapshot.sessionVersion),
+            },
+          };
+        },
+        false,
+      );
+      toast({ title: `Participant ${action}d`, description: `${targetUserId} updated` });
+    },
+    [isEnded, isHost, jamId, moderationReason, room, swr, toast],
+  );
+
   if (swr.isLoading && !room) {
     return (
       <main className="min-h-screen bg-black p-6">
@@ -401,7 +445,7 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                                 <p className="text-xs text-zinc-400">added by {item.addedBy}</p>
                               </div>
                               <DropdownMenu>
-                                <DropdownMenuTrigger>
+                                <DropdownMenuTrigger asChild>
                                   <Button variant="outline" size="sm">Actions</Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent>
@@ -460,7 +504,15 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                   <CardHeader>
                     <CardTitle>Participants</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-2">
+                  <CardContent className="space-y-3">
+                    {isHost ? (
+                      <Input
+                        value={moderationReason}
+                        onChange={(event) => setModerationReason(event.target.value)}
+                        placeholder="Moderation reason (optional)"
+                        disabled={isEnded}
+                      />
+                    ) : null}
                     {room.sessionState.session.participants.map((participant) => (
                       <div
                         className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
@@ -470,7 +522,30 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                           <Avatar fallback={participant.userId.slice(0, 2).toUpperCase()} />
                           <span className="text-sm">{participant.userId}</span>
                         </div>
-                        <Badge>{participant.role}</Badge>
+                        <div className="flex items-center gap-2">
+                          {participant.muted ? <Badge className="border-amber-700 bg-amber-950 text-amber-200">muted</Badge> : null}
+                          <Badge>{participant.role}</Badge>
+                          {isHost && participant.userId !== room.sessionState.session.hostUserId ? (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={isEnded || Boolean(participant.muted)}
+                                onClick={() => void handleModeration("mute", participant.userId)}
+                              >
+                                Mute
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                disabled={isEnded}
+                                onClick={() => void handleModeration("kick", participant.userId)}
+                              >
+                                Kick
+                              </Button>
+                            </>
+                          ) : null}
+                        </div>
                       </div>
                     ))}
                   </CardContent>
@@ -512,7 +587,7 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                 <Button size="sm" variant="secondary" disabled={!isHost || isEnded || Boolean(pendingPlayback)} onClick={() => void handlePlayback("next")}>Next</Button>
               </div>
               <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogTrigger>
+                <DialogTrigger asChild>
                   <Button size="sm" variant="destructive" disabled={!isHost || isEnded}>End Session</Button>
                 </DialogTrigger>
                 <DialogContent>
@@ -523,7 +598,7 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                     </DialogDescription>
                   </DialogHeader>
                   <DialogFooter>
-                    <DialogClose>
+                    <DialogClose asChild>
                       <Button variant="outline" size="sm">Cancel</Button>
                     </DialogClose>
                     <Button variant="destructive" size="sm" onClick={() => void endSession()}>

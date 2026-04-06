@@ -7,6 +7,7 @@ export interface Claims {
 export interface SessionParticipant {
   userId: string;
   role: string;
+  muted?: boolean;
 }
 
 export interface SessionSnapshot {

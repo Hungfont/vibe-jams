@@ -346,7 +346,7 @@ jest.mock('@/lib/openai', () => ({
 
 ### Run Coverage Report
 ```bash
-npm run test:coverage
+bun test:coverage
 ```
 
 ### Coverage Thresholds
@@ -424,7 +424,7 @@ npm test -- --watch
 ### Pre-Commit Hook
 ```bash
 # Runs before every commit
-npm test && npm run lint
+bun test && bun run lint
 ```
 
 ### CI/CD Integration

@@ -15,7 +15,7 @@ The `rt-gateway` service SHALL provide websocket room subscription for each jam 
 - **THEN** `rt-gateway` rejects the subscription request with a deterministic validation error
 
 ### Requirement: Kafka fanout consumer broadcasts queue and playback events
-The `rt-gateway` service SHALL consume jam queue and playback event streams using consumer group `rt-gateway-fanout` and SHALL broadcast normalized updates to subscribers in room `jam:{sessionId}`.
+The `rt-gateway` service SHALL consume jam queue, playback, and moderation event streams using consumer group `rt-gateway-fanout` and SHALL broadcast normalized updates to subscribers in room `jam:{sessionId}`.
 
 #### Scenario: Queue event is consumed and broadcast
 - **WHEN** `rt-gateway-fanout` consumes a valid queue event for a `sessionId`
@@ -23,6 +23,10 @@ The `rt-gateway` service SHALL consume jam queue and playback event streams usin
 
 #### Scenario: Playback event is consumed and broadcast
 - **WHEN** `rt-gateway-fanout` consumes a valid playback event for a `sessionId`
+- **THEN** the event is normalized and broadcast to all active subscribers in `jam:{sessionId}`
+
+#### Scenario: Moderation event is consumed and broadcast
+- **WHEN** `rt-gateway-fanout` consumes a valid moderation event for a `sessionId`
 - **THEN** the event is normalized and broadcast to all active subscribers in `jam:{sessionId}`
 
 ### Requirement: Ordered delivery for a session stream
@@ -68,6 +72,10 @@ The system SHALL expose fanout telemetry required to validate realtime performan
 #### Scenario: Recovery metrics are emitted
 - **WHEN** gap detection and snapshot recovery occur
 - **THEN** metrics for gap count, snapshot latency, and recovery outcome are emitted for operational monitoring
+
+#### Scenario: Moderation consumer hook can observe moderation envelopes
+- **WHEN** moderation envelope is consumed in fanout consumer loop
+- **THEN** configured abuse-heuristic hook is invoked with envelope metadata for downstream policy analysis
 
 ### Requirement: Websocket handshake MUST enforce configured origin allowlist
 rt-gateway SHALL validate websocket handshake Origin against configured allowlist and SHALL reject unknown origins by default.

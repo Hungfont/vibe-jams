@@ -24,6 +24,8 @@ const (
 	CodeTrackNotFound = "track_not_found"
 	// CodeTrackUnavailable is returned when referenced track is unavailable.
 	CodeTrackUnavailable = "track_unavailable"
+	// CodeModerationBlocked is returned when actor is blocked by moderation policy.
+	CodeModerationBlocked = "moderation_blocked"
 	// CodeInternalError is returned on unexpected server failures.
 	CodeInternalError = "internal_error"
 )

@@ -264,9 +264,41 @@ Edge cases:
 2. Realtime degraded bootstrap keeps room usable with periodic state refresh fallback.
 
 Validation evidence:
-1. `cd frontend && npm run lint`
-2. `cd frontend && npm run build`
-3. `cd frontend && npm test`
+1. `cd frontend && bun lint`
+2. `cd frontend && bun build`
+3. `cd frontend && bun test`
+
+### Flow 11: Moderation Controls (Mute/Kick, Realtime Visibility, Blocked Actions)
+
+Steps:
+1. Host sends moderation command through frontend API routes: `POST /api/jam/{jamId}/moderation/mute` or `POST /api/jam/{jamId}/moderation/kick`.
+2. Frontend route validates auth claims and forwards command to jam-service moderation endpoints.
+3. jam-service validates host ownership and applies moderation transition:
+	- mute: mark target participant as `muted=true`
+	- kick: remove target participant from active participants
+4. jam-service publishes moderation audit envelope to `jam.moderation.events` with `action`, `actorUserId`, `targetUserId`, `reason`, and `occurredAt`.
+5. rt-gateway consumes moderation topic and invokes moderation hook (default no-op) before fanout processing.
+6. rt-gateway fans out moderation event and clients refresh state snapshot path for room consistency.
+7. Muted/kicked participants attempting blocked queue mutations receive deterministic moderation-blocked response.
+
+Expected outcome:
+1. Non-host moderation attempts are rejected deterministically with host-only semantics.
+2. Successful moderation commands update participant projection and audit event stream.
+3. Room subscribers receive moderation updates through realtime fanout.
+4. Muted or kicked users cannot perform blocked queue mutations and receive `moderation_blocked`.
+
+Edge cases:
+1. Missing/invalid moderation payload returns deterministic `invalid_input`.
+2. Host cannot moderate invalid target identities (for example: missing participant or host self) and receives deterministic request/domain error mapping.
+3. Moderation topic events with stale aggregate versions are suppressed by fanout versioning.
+
+Validation evidence:
+1. `cd backend/jam-service && go test ./... -count=1`
+2. `cd backend/jam-service && go test ./internal/handler -run TestModerationEndpointsAndBlockedQueueCommand -count=1`
+3. `cd backend/jam-service && go test ./internal/service -run TestModerationPublishesAuditEvent -count=1`
+4. `cd backend/rt-gateway && go test ./... -count=1`
+5. `cd backend/rt-gateway && go test ./internal/server -run TestModerationTopicInvokesHookAndFansOut -count=1`
+6. `cd frontend && npm test -- jam-room-client.test.tsx`
 
 ## Assumptions Logged
 

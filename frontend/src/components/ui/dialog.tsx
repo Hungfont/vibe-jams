@@ -21,10 +21,25 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
   return <DialogContext.Provider value={{ open, setOpen: onOpenChange }}>{children}</DialogContext.Provider>;
 }
 
-export function DialogTrigger({ children }: { children: React.ReactNode }) {
+interface DialogTriggerProps {
+  children: React.ReactNode;
+  asChild?: boolean;
+}
+
+export function DialogTrigger({ children, asChild = false }: DialogTriggerProps) {
   const context = React.useContext(DialogContext);
   if (!context) {
     return null;
+  }
+
+  if (asChild && React.isValidElement(children)) {
+    const child = children as React.ReactElement<{ onClick?: () => void }>;
+    return React.cloneElement(child, {
+      onClick: () => {
+        child.props.onClick?.();
+        context.setOpen(true);
+      },
+    });
   }
 
   return (
@@ -63,10 +78,25 @@ export function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLD
   return <div className={cn("mt-4 flex items-center justify-end gap-2", className)} {...props} />;
 }
 
-export function DialogClose({ children }: { children: React.ReactNode }) {
+interface DialogCloseProps {
+  children: React.ReactNode;
+  asChild?: boolean;
+}
+
+export function DialogClose({ children, asChild = false }: DialogCloseProps) {
   const context = React.useContext(DialogContext);
   if (!context) {
     return null;
+  }
+
+  if (asChild && React.isValidElement(children)) {
+    const child = children as React.ReactElement<{ onClick?: () => void }>;
+    return React.cloneElement(child, {
+      onClick: () => {
+        child.props.onClick?.();
+        context.setOpen(false);
+      },
+    });
   }
 
   return (

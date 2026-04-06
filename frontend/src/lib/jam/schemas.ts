@@ -26,3 +26,8 @@ export const playbackCommandSchema = z.object({
   expectedQueueVersion: z.number().int().positive("expectedQueueVersion must be positive"),
   positionMs: z.number().int().min(0).optional(),
 });
+
+export const moderationCommandSchema = z.object({
+  targetUserId: z.string().trim().min(1, "targetUserId is required"),
+  reason: z.string().trim().optional(),
+});

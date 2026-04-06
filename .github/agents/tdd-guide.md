@@ -35,7 +35,7 @@ Remove duplication, improve names, optimize -- tests must stay green.
 
 ### 6. Verify Coverage
 ```bash
-npm run test:coverage
+bun test:coverage
 # Required: 80%+ branches, functions, lines, statements
 ```
 

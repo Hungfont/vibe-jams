@@ -7,6 +7,8 @@ import type { BffOrchestrationData, QueueSnapshot, SessionStateSnapshot } from "
 
 const mocks = vi.hoisted(() => ({
   addQueueItem: vi.fn(),
+  kickParticipant: vi.fn(),
+  muteParticipant: vi.fn(),
   removeQueueItem: vi.fn(),
   reorderQueue: vi.fn(),
   endJamSession: vi.fn(),
@@ -18,6 +20,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/jam/actions", () => ({
   addQueueItem: mocks.addQueueItem,
+  kickParticipant: mocks.kickParticipant,
+  muteParticipant: mocks.muteParticipant,
   removeQueueItem: mocks.removeQueueItem,
   reorderQueue: mocks.reorderQueue,
 }));
@@ -114,6 +118,8 @@ describe("JamRoomClient", () => {
     vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
 
     mocks.addQueueItem.mockReset();
+    mocks.kickParticipant.mockReset();
+    mocks.muteParticipant.mockReset();
     mocks.removeQueueItem.mockReset();
     mocks.reorderQueue.mockReset();
     mocks.endJamSession.mockReset();
@@ -209,5 +215,39 @@ describe("JamRoomClient", () => {
     const playButtons = screen.getAllByRole("button", { name: "Play" });
     await userEvent.click(playButtons[0]);
     expect(mocks.executePlayback).not.toHaveBeenCalled();
+  });
+
+  it("allows host moderation actions and renders muted state", async () => {
+    const moderatedSession = {
+      jamId: "jam-1",
+      status: "active",
+      hostUserId: "host-1",
+      participants: [
+        { userId: "host-1", role: "host" },
+        { userId: "member-1", role: "member", muted: true },
+      ],
+      sessionVersion: 4,
+    };
+    mocks.muteParticipant.mockResolvedValue({ success: true, data: moderatedSession });
+
+    render(
+      <JamRoomClient
+        jamId="jam-1"
+        initialView="participants"
+        initialData={buildRoom()}
+      />,
+    );
+
+    await userEvent.type(screen.getByPlaceholderText("Moderation reason (optional)"), "spam links");
+    await userEvent.click(screen.getByRole("button", { name: "Mute" }));
+
+    await waitFor(() => {
+      expect(mocks.muteParticipant).toHaveBeenCalledWith(
+        "jam-1",
+        expect.objectContaining({ targetUserId: "member-1", reason: "spam links" }),
+      );
+    });
+
+    expect(screen.getByText("muted")).toBeInTheDocument();
   });
 });

@@ -78,7 +78,7 @@ func main() {
 func buildConsumer(cfg server.Config) (gatewaykafka.Consumer, error) {
 	switch cfg.ConsumerBackend {
 	case "kafka":
-		topics := []string{cfg.QueueTopic, cfg.PlaybackTopic}
+		topics := []string{cfg.QueueTopic, cfg.PlaybackTopic, cfg.ModerationTopic}
 		consumer, err := gatewaykafka.NewKafkaConsumer(cfg.KafkaBootstrap, cfg.ConsumerGroupID, topics)
 		if err != nil {
 			return nil, err

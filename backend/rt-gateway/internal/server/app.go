@@ -37,20 +37,30 @@ type App struct {
 	metrics   *metrics.Registry
 	hub       *fanout.Hub
 	processor *fanout.Processor
+	hook      ModerationEventHook
 }
 
 // NewApp builds the gateway runtime graph.
 func NewApp(cfg Config, consumer gatewaykafka.Consumer) *App {
+	return NewAppWithModerationHook(cfg, consumer, NoopModerationEventHook{})
+}
+
+// NewAppWithModerationHook builds the gateway runtime graph with a moderation hook.
+func NewAppWithModerationHook(cfg Config, consumer gatewaykafka.Consumer, hook ModerationEventHook) *App {
 	registry := metrics.NewRegistry()
 	hub := fanout.NewHub(cfg.FanoutBufferSize, registry)
 	fetcher := snapshot.NewClient(cfg.JamServiceURL, cfg.SnapshotTimeout)
 	processor := fanout.NewProcessor(hub, registry, fetcher, cfg.RecoveryMaxRetries, cfg.RecoveryBackoff)
+	if hook == nil {
+		hook = NoopModerationEventHook{}
+	}
 	return &App{
 		cfg:       cfg,
 		consumer:  consumer,
 		metrics:   registry,
 		hub:       hub,
 		processor: processor,
+		hook:      hook,
 	}
 }
 
@@ -72,13 +82,19 @@ func (a *App) StartConsumer(ctx context.Context) error {
 	}
 
 	return a.consumer.Start(ctx, func(consumeCtx context.Context, record gatewaykafka.Record) error {
-		if record.Topic != a.cfg.QueueTopic && record.Topic != a.cfg.PlaybackTopic {
+		isModerationEvent := record.Topic == a.cfg.ModerationTopic
+		if record.Topic != a.cfg.QueueTopic && record.Topic != a.cfg.PlaybackTopic && !isModerationEvent {
 			return nil
 		}
 
 		envelope, err := sharedevent.UnmarshalEnvelope(record.Value)
 		if err != nil {
 			return fmt.Errorf("decode envelope: %w", err)
+		}
+		if isModerationEvent {
+			if err := a.hook.HandleModerationEvent(consumeCtx, envelope); err != nil {
+				return fmt.Errorf("handle moderation hook: %w", err)
+			}
 		}
 		return a.processor.HandleEnvelope(consumeCtx, envelope)
 	})

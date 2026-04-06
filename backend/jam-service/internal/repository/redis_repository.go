@@ -25,6 +25,10 @@ var (
 	ErrHostOwnershipRequired = errors.New("host ownership required")
 	// ErrParticipantNotFound indicates user is not in session participant list.
 	ErrParticipantNotFound = errors.New("participant not found")
+	// ErrModerationBlocked indicates actor is blocked by moderation policy.
+	ErrModerationBlocked = errors.New("moderation blocked")
+	// ErrModerationTargetInvalid indicates moderation target is invalid.
+	ErrModerationTargetInvalid = errors.New("invalid moderation target")
 )
 
 type addResult struct {
@@ -40,6 +44,8 @@ type jamQueueState struct {
 	status            model.SessionStatus
 	hostUserID        string
 	participants      map[string]model.SessionRole
+	mutedUsers        map[string]bool
+	kickedUsers       map[string]bool
 	endCause          string
 	endedBy           string
 }
@@ -122,6 +128,8 @@ func (r *RedisQueueRepository) CreateSession(hostUserID string) (model.SessionSn
 		participants: map[string]model.SessionRole{
 			hostUserID: model.SessionRoleHost,
 		},
+		mutedUsers:  make(map[string]bool),
+		kickedUsers: make(map[string]bool),
 	}
 	r.jams[jamID] = state
 	if err := r.saveDurableStateLocked(); err != nil {
@@ -141,6 +149,9 @@ func (r *RedisQueueRepository) JoinSession(jamID string, userID string) (model.S
 	}
 	if err := ensureActive(state); err != nil {
 		return model.SessionSnapshot{}, err
+	}
+	if state.kickedUsers[userID] {
+		return model.SessionSnapshot{}, ErrModerationBlocked
 	}
 	if _, exists := state.participants[userID]; !exists {
 		state.participants[userID] = model.SessionRoleMember
@@ -183,6 +194,69 @@ func (r *RedisQueueRepository) LeaveSession(jamID string, userID string) (model.
 	}
 
 	delete(state.participants, userID)
+	delete(state.mutedUsers, userID)
+	state.sessionVersion++
+	if err := r.saveDurableStateLocked(); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	return buildSessionSnapshot(jamID, state), nil
+}
+
+// MuteParticipant marks one target participant as muted.
+func (r *RedisQueueRepository) MuteParticipant(jamID string, actorUserID string, req model.ModerationCommandRequest) (model.SessionSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	if err := ensureActive(state); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	if state.hostUserID != actorUserID {
+		return model.SessionSnapshot{}, ErrHostOwnershipRequired
+	}
+	if req.TargetUserID == "" || req.TargetUserID == state.hostUserID {
+		return model.SessionSnapshot{}, ErrModerationTargetInvalid
+	}
+	if _, exists := state.participants[req.TargetUserID]; !exists {
+		return model.SessionSnapshot{}, ErrParticipantNotFound
+	}
+
+	state.mutedUsers[req.TargetUserID] = true
+	state.sessionVersion++
+	if err := r.saveDurableStateLocked(); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	return buildSessionSnapshot(jamID, state), nil
+}
+
+// KickParticipant removes one participant and blocks future command actions.
+func (r *RedisQueueRepository) KickParticipant(jamID string, actorUserID string, req model.ModerationCommandRequest) (model.SessionSnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	if err := ensureActive(state); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+	if state.hostUserID != actorUserID {
+		return model.SessionSnapshot{}, ErrHostOwnershipRequired
+	}
+	if req.TargetUserID == "" || req.TargetUserID == state.hostUserID {
+		return model.SessionSnapshot{}, ErrModerationTargetInvalid
+	}
+	if _, exists := state.participants[req.TargetUserID]; !exists {
+		return model.SessionSnapshot{}, ErrParticipantNotFound
+	}
+
+	delete(state.participants, req.TargetUserID)
+	delete(state.mutedUsers, req.TargetUserID)
+	state.kickedUsers[req.TargetUserID] = true
 	state.sessionVersion++
 	if err := r.saveDurableStateLocked(); err != nil {
 		return model.SessionSnapshot{}, err
@@ -256,6 +330,9 @@ func (r *RedisQueueRepository) Add(jamID string, req model.AddQueueItemRequest) 
 	if err := ensureActive(state); err != nil {
 		return model.QueueSnapshot{}, false, err
 	}
+	if err := ensureActorCanMutate(state, req.AddedBy); err != nil {
+		return model.QueueSnapshot{}, false, err
+	}
 
 	if previous, ok := state.idempotencyResult[req.IdempotencyKey]; ok {
 		return cloneSnapshot(previous.snapshot), true, nil
@@ -284,7 +361,7 @@ func (r *RedisQueueRepository) Add(jamID string, req model.AddQueueItemRequest) 
 }
 
 // Remove atomically deletes an item by ID and increments queue version by one.
-func (r *RedisQueueRepository) Remove(jamID string, itemID string) (model.QueueSnapshot, error) {
+func (r *RedisQueueRepository) Remove(jamID string, itemID string, actorUserID string) (model.QueueSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -293,6 +370,9 @@ func (r *RedisQueueRepository) Remove(jamID string, itemID string) (model.QueueS
 		return model.QueueSnapshot{}, err
 	}
 	if err := ensureActive(state); err != nil {
+		return model.QueueSnapshot{}, err
+	}
+	if err := ensureActorCanMutate(state, actorUserID); err != nil {
 		return model.QueueSnapshot{}, err
 	}
 	index := slices.IndexFunc(state.items, func(item model.QueueItem) bool {
@@ -316,7 +396,7 @@ func (r *RedisQueueRepository) Remove(jamID string, itemID string) (model.QueueS
 }
 
 // Reorder atomically reorders queue items when expected version matches current.
-func (r *RedisQueueRepository) Reorder(jamID string, expectedVersion int64, itemIDs []string) (model.QueueSnapshot, error) {
+func (r *RedisQueueRepository) Reorder(jamID string, expectedVersion int64, itemIDs []string, actorUserID string) (model.QueueSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -325,6 +405,9 @@ func (r *RedisQueueRepository) Reorder(jamID string, expectedVersion int64, item
 		return model.QueueSnapshot{}, err
 	}
 	if err := ensureActive(state); err != nil {
+		return model.QueueSnapshot{}, err
+	}
+	if err := ensureActorCanMutate(state, actorUserID); err != nil {
 		return model.QueueSnapshot{}, err
 	}
 	if expectedVersion != state.queueVersion {
@@ -395,6 +478,8 @@ func (r *RedisQueueRepository) ensureJamState(jamID string) *jamQueueState {
 		idempotencyResult: make(map[string]addResult),
 		status:            model.SessionStatusActive,
 		participants:      make(map[string]model.SessionRole),
+		mutedUsers:        make(map[string]bool),
+		kickedUsers:       make(map[string]bool),
 	}
 	r.jams[jamID] = state
 	return state
@@ -421,6 +506,7 @@ func buildSessionSnapshot(jamID string, state *jamQueueState) model.SessionSnaps
 		participants = append(participants, model.SessionParticipant{
 			UserID: userID,
 			Role:   role,
+			Muted:  state.mutedUsers[userID],
 		})
 	}
 	sort.Slice(participants, func(i, j int) bool {
@@ -436,6 +522,22 @@ func buildSessionSnapshot(jamID string, state *jamQueueState) model.SessionSnaps
 		EndCause:       state.endCause,
 		EndedBy:        state.endedBy,
 	}
+}
+
+func ensureActorCanMutate(state *jamQueueState, actorUserID string) error {
+	if actorUserID == "" {
+		return ErrModerationBlocked
+	}
+	if state.kickedUsers[actorUserID] {
+		return ErrModerationBlocked
+	}
+	if _, exists := state.participants[actorUserID]; !exists {
+		return ErrModerationBlocked
+	}
+	if state.mutedUsers[actorUserID] {
+		return ErrModerationBlocked
+	}
+	return nil
 }
 
 // cloneItems returns a copy to keep repository internal state immutable externally.

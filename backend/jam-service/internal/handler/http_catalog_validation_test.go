@@ -32,6 +32,7 @@ func TestAddQueueTrackRejectedWhenCatalogNotFound(t *testing.T) {
 	jamID := mustCreateSession(t, h)
 
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+jamID+"/queue/add", bytes.NewBufferString(`{"trackId":"trk_missing","addedBy":"host_1","idempotencyKey":"k_nf"}`))
+	addReq.Header.Set("Authorization", "Bearer token-host")
 	addRec := httptest.NewRecorder()
 	h.ServeHTTP(addRec, addReq)
 
@@ -49,6 +50,7 @@ func TestAddQueueTrackRejectedWhenCatalogUnavailable(t *testing.T) {
 	jamID := mustCreateSession(t, h)
 
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+jamID+"/queue/add", bytes.NewBufferString(`{"trackId":"trk_blocked","addedBy":"host_1","idempotencyKey":"k_un"}`))
+	addReq.Header.Set("Authorization", "Bearer token-host")
 	addRec := httptest.NewRecorder()
 	h.ServeHTTP(addRec, addReq)
 
@@ -66,6 +68,7 @@ func TestAddQueueTrackAcceptedWhenCatalogPlayable(t *testing.T) {
 	jamID := mustCreateSession(t, h)
 
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+jamID+"/queue/add", bytes.NewBufferString(`{"trackId":"trk_ok","addedBy":"host_1","idempotencyKey":"k_ok"}`))
+	addReq.Header.Set("Authorization", "Bearer token-host")
 	addRec := httptest.NewRecorder()
 	h.ServeHTTP(addRec, addReq)
 	if addRec.Code != http.StatusOK {

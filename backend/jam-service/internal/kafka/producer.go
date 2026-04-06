@@ -70,3 +70,25 @@ func (p *Producer) PublishSessionEvent(ctx context.Context, sessionID string, ag
 
 	return p.pub.Publish(ctx, kafka.TopicJamSession, sessionID, raw)
 }
+
+// PublishModerationEvent emits moderation audit events keyed by session ID.
+func (p *Producer) PublishModerationEvent(ctx context.Context, sessionID string, aggregateVersion int64, eventType string, payload any) error {
+	if sessionID == "" {
+		return ErrSessionIDKeyRequired
+	}
+
+	env := event.Envelope{
+		EventID:          fmt.Sprintf("moderation-%d", time.Now().UnixNano()),
+		EventType:        eventType,
+		SessionID:        sessionID,
+		AggregateVersion: aggregateVersion,
+		OccurredAt:       time.Now().UTC(),
+		Payload:          event.MustPayload(payload),
+	}
+	raw, err := event.MarshalEnvelope(env, true)
+	if err != nil {
+		return err
+	}
+
+	return p.pub.Publish(ctx, kafka.TopicJamModeration, sessionID, raw)
+}

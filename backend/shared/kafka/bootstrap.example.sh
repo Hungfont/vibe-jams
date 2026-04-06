@@ -38,14 +38,17 @@ add_acl() {
 create_topic "jam.session.events" "12" "604800000"
 create_topic "jam.queue.events" "24" "604800000"
 create_topic "jam.playback.events" "12" "604800000"
+create_topic "jam.moderation.events" "12" "604800000"
 create_topic "analytics.user.actions" "24" "1209600000"
 
 # Producer ACLs
 add_acl "svc-jam-service" "WRITE" "jam.session.events"
 add_acl "svc-jam-service" "WRITE" "jam.queue.events"
+add_acl "svc-jam-service" "WRITE" "jam.moderation.events"
 add_acl "svc-playback-service" "WRITE" "jam.playback.events"
 add_acl "svc-api-service" "WRITE" "analytics.user.actions"
 
 # Consumer ACLs
 add_acl "svc-rt-gateway" "READ" "jam.queue.events"
 add_acl "svc-rt-gateway" "READ" "jam.playback.events"
+add_acl "svc-rt-gateway" "READ" "jam.moderation.events"

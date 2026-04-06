@@ -24,6 +24,8 @@ type persistedJamQueueState struct {
 	Status            model.SessionStatus            `json:"status"`
 	HostUserID        string                         `json:"hostUserId"`
 	Participants      map[string]model.SessionRole   `json:"participants"`
+	MutedUsers        map[string]bool                `json:"mutedUsers"`
+	KickedUsers       map[string]bool                `json:"kickedUsers"`
 	EndCause          string                         `json:"endCause"`
 	EndedBy           string                         `json:"endedBy"`
 }
@@ -58,6 +60,14 @@ func (r *RedisQueueRepository) loadDurableStateLocked() error {
 		for userID, role := range state.Participants {
 			participants[userID] = role
 		}
+		mutedUsers := make(map[string]bool, len(state.MutedUsers))
+		for userID, muted := range state.MutedUsers {
+			mutedUsers[userID] = muted
+		}
+		kickedUsers := make(map[string]bool, len(state.KickedUsers))
+		for userID, kicked := range state.KickedUsers {
+			kickedUsers[userID] = kicked
+		}
 
 		r.jams[jamID] = &jamQueueState{
 			items:             cloneItems(state.Items),
@@ -68,6 +78,8 @@ func (r *RedisQueueRepository) loadDurableStateLocked() error {
 			status:            state.Status,
 			hostUserID:        state.HostUserID,
 			participants:      participants,
+			mutedUsers:        mutedUsers,
+			kickedUsers:       kickedUsers,
 			endCause:          state.EndCause,
 			endedBy:           state.EndedBy,
 		}
@@ -97,6 +109,16 @@ func (r *RedisQueueRepository) saveDurableStateLocked() error {
 			participants[userID] = role
 		}
 
+		mutedUsers := make(map[string]bool, len(state.mutedUsers))
+		for userID, muted := range state.mutedUsers {
+			mutedUsers[userID] = muted
+		}
+
+		kickedUsers := make(map[string]bool, len(state.kickedUsers))
+		for userID, kicked := range state.kickedUsers {
+			kickedUsers[userID] = kicked
+		}
+
 		persisted.Jams[jamID] = persistedJamQueueState{
 			Items:             cloneItems(state.items),
 			QueueVersion:      state.queueVersion,
@@ -106,6 +128,8 @@ func (r *RedisQueueRepository) saveDurableStateLocked() error {
 			Status:            state.status,
 			HostUserID:        state.hostUserID,
 			Participants:      participants,
+			MutedUsers:        mutedUsers,
+			KickedUsers:       kickedUsers,
 			EndCause:          state.endCause,
 			EndedBy:           state.endedBy,
 		}

@@ -230,6 +230,7 @@ func TestSessionLifecycleJoinLeaveAndHostLeaveEnds(t *testing.T) {
 
 	// queue write should now be blocked
 	queueReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+created.JamID+"/queue/add", bytes.NewBufferString(`{"trackId":"t1","addedBy":"host_1","idempotencyKey":"k1"}`))
+	queueReq.Header.Set("Authorization", "Bearer token-host")
 	queueRec := httptest.NewRecorder()
 	h.ServeHTTP(queueRec, queueReq)
 	if queueRec.Code != http.StatusConflict {

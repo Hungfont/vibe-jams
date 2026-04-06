@@ -34,3 +34,19 @@ func TestPublishSessionEvent_MissingSessionID(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestPublishModerationEvent_UsesModerationTopic(t *testing.T) {
+	pub := &InMemoryPublisher{}
+	producer := NewProducer(pub)
+
+	err := producer.PublishModerationEvent(context.Background(), "jam_1", 3, "jam.moderation.muted", map[string]string{"targetUserId": "member_1"})
+	if err != nil {
+		t.Fatalf("PublishModerationEvent() error = %v", err)
+	}
+	if len(pub.Records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(pub.Records))
+	}
+	if pub.Records[0].Topic != sharedkafka.TopicJamModeration {
+		t.Fatalf("unexpected topic: %s", pub.Records[0].Topic)
+	}
+}

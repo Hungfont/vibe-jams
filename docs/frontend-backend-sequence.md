@@ -46,6 +46,7 @@ The sections below are intentionally ordered by page runtime path.
     - Process realtime events and run snapshot recovery when needed
 - User action flows:
     - Queue actions: add/remove/reorder
+    - Moderation actions (host): mute/kick participants
     - Playback commands: play/pause/next/prev/seek
     - End session (host)
 - Frontend API routes used:
@@ -54,6 +55,8 @@ The sections below are intentionally ordered by page runtime path.
     - `POST /api/jam/{jamId}/queue/add`
     - `POST /api/jam/{jamId}/queue/remove`
     - `POST /api/jam/{jamId}/queue/reorder`
+    - `POST /api/jam/{jamId}/moderation/mute`
+    - `POST /api/jam/{jamId}/moderation/kick`
     - `POST /api/jam/{jamId}/playback/commands`
     - `POST /api/jam/{jamId}/end`
 - UI primitives used from frontend/src/components/ui:
@@ -126,8 +129,8 @@ sequenceDiagram
     A-->>N: 200 claims or 401
     N-->>U: Envelope success/error
 
-    Note over U,N: 2) Jam create/join/leave/end and queue actions
-    U->>N: POST /api/jam/create (or join/leave/end/queue/*)
+    Note over U,N: 2) Jam create/join/leave/end, queue, and moderation actions
+    U->>N: POST /api/jam/create (or join/leave/end/queue/*/moderation/*)
     N->>A: POST /internal/v1/auth/validate
     A-->>N: claims
     N->>J: /api/v1/jams/... endpoint
@@ -183,10 +186,12 @@ sequenceDiagram
     par Event production
         J->>K: Publish jam.session.* and jam.queue.* events
     and
+        J->>K: Publish jam.moderation.* events
+    and
         P->>K: Publish jam.playback.updated events
     end
 
-    R->>K: Consume queue/playback topics
+    R->>K: Consume queue/playback/moderation topics
     R-->>U: Fanout outbound realtime events
 
     alt Gap or stale cursor detected
@@ -210,6 +215,8 @@ sequenceDiagram
 | POST /api/jam/{jamId}/queue/add | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/queue/add |
 | POST /api/jam/{jamId}/queue/remove | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/queue/remove |
 | POST /api/jam/{jamId}/queue/reorder | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/queue/reorder |
+| POST /api/jam/{jamId}/moderation/mute | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/moderation/mute |
+| POST /api/jam/{jamId}/moderation/kick | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/moderation/kick |
 | POST /api/jam/{jamId}/playback/commands | auth-service -> playback-service | POST /internal/v1/auth/validate, POST /v1/jam/sessions/{jamId}/playback/commands |
 | GET /api/catalog/tracks/{trackId} | catalog-service | GET /internal/v1/catalog/tracks/{trackId} |
 | POST /api/bff/jam/{jamId}/orchestration | api-service (BFF) | POST /v1/bff/mvp/sessions/{jamId}/orchestration |
