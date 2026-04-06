@@ -16,6 +16,7 @@ func TestValidateClaims(t *testing.T) {
 				UserID:       "u-1",
 				Plan:         "premium",
 				SessionState: SessionStateValid,
+				Scope:        []string{"jam:read", "jam:control"},
 			},
 			wantErr: false,
 		},

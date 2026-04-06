@@ -10,7 +10,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "check:shadcn": "bun run ./scripts/check-shadcn-conformance.ts",
+    "lint": "bun run check:shadcn && eslint",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

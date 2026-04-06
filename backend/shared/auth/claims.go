@@ -24,9 +24,10 @@ const (
 
 // Claims contains the normalized auth contract used by backend services.
 type Claims struct {
-	UserID       string `json:"userId"`
-	Plan         string `json:"plan"`
-	SessionState string `json:"sessionState"`
+	UserID       string   `json:"userId"`
+	Plan         string   `json:"plan"`
+	SessionState string   `json:"sessionState"`
+	Scope        []string `json:"scope,omitempty"`
 }
 
 // ValidateClaims ensures required contract fields exist and are valid.

@@ -12,7 +12,22 @@ This document reflects the current implementation flow for frontend requests and
 
 The sections below are intentionally ordered by page runtime path.
 
-### 1) Lobby Page (`/`)
+### 1) Login Page (`/login`)
+
+- Entry file: frontend/src/app/login/page.tsx
+- Client feature: frontend/src/components/auth/login-form.tsx
+- Primary user actions:
+    - Submit identity/password login form
+    - Receive normalized error feedback for invalid credentials
+- Frontend API routes used in order:
+    - `POST /api/auth/login`
+    - `POST /api/auth/refresh` (session renewal path)
+    - `POST /api/auth/logout` (session termination path)
+    - `GET /api/auth/me` (current-claims lookup)
+- UI primitives used from frontend/src/components/ui:
+    - Card, Input, Button, Alert, Separator, Toast
+
+### 2) Lobby Page (`/`)
 
 - Entry file: frontend/src/app/page.tsx
 - Client feature: frontend/src/components/jam/lobby-client.tsx
@@ -26,7 +41,7 @@ The sections below are intentionally ordered by page runtime path.
 - UI primitives used from frontend/src/components/ui:
     - Card, Tabs, Input, Button, Alert, Toast
 
-### 2) Jam Page SSR Bootstrap (`/jam/{jamId}`)
+### 3) Jam Page SSR Bootstrap (`/jam/{jamId}`)
 
 - Entry file: frontend/src/app/jam/[jamId]/page.tsx
 - Server-side bootstrap action:
@@ -35,7 +50,7 @@ The sections below are intentionally ordered by page runtime path.
     - Load initial room state before client hydration
     - Pass initial view and initial data/error to JamRoomClient
 
-### 3) Jam Room Client Runtime
+### 4) Jam Room Client Runtime
 
 - Client feature: frontend/src/components/jam/jam-room-client.tsx
 - Runtime flow order:
@@ -72,6 +87,7 @@ When implementing or reviewing jam flows, keep UI usage tied to page responsibil
 
 | Page | UX responsibility | UI primitives (frontend/src/components/ui) |
 | --- | --- | --- |
+| `/login` | Authentication entry and credential session bootstrap | Card, Input, Button, Alert, Separator, Toast |
 | `/` Lobby | Session entry and entitlement-safe create/join | Card, Tabs, Input, Button, Alert, Toast |
 | `/jam/{jamId}` SSR | Initial orchestration bootstrap and error handoff | Alert (error fallback) |
 | `/jam/{jamId}` Room | Realtime collaboration and host controls | Tabs, Card, ScrollArea, DropdownMenu, Tooltip, Slider, Dialog, Badge, Avatar, Alert, Toast, Button, Input, Skeleton, Separator |
@@ -79,6 +95,7 @@ When implementing or reviewing jam flows, keep UI usage tied to page responsibil
 ## Guardrail Compliance Checklist
 
 - Page order preserved: Lobby -> Jam SSR bootstrap -> Jam room runtime.
+- Page order preserved: Login -> Lobby -> Jam SSR bootstrap -> Jam room runtime.
 - Browser requests stay on frontend-owned `/api/**` routes.
 - Route-to-service mapping matches this document.
 - BFF orchestration semantics preserved:
@@ -122,6 +139,27 @@ sequenceDiagram
     participant P as playback-service
     participant C as catalog-service
     participant B as api-service (BFF)
+
+    Note over U,N: 0) AuthN lifecycle on frontend auth boundary
+    U->>N: POST /api/auth/login
+    N->>A: POST /v1/auth/login
+    A-->>N: access+refresh token pair, claims
+    N-->>U: Envelope success/error + HttpOnly cookie set
+
+    U->>N: POST /api/auth/refresh (X-CSRF-Token)
+    N->>A: POST /v1/auth/refresh
+    A-->>N: rotated token pair, claims
+    N-->>U: Envelope success/error + rotated cookies
+
+    U->>N: POST /api/auth/logout (X-CSRF-Token)
+    N->>A: POST /v1/auth/logout
+    A-->>N: status
+    N-->>U: Envelope success/error + cookie clear
+
+    U->>N: GET /api/auth/me
+    N->>A: GET /v1/auth/me
+    A-->>N: normalized claims
+    N-->>U: Envelope success/error
 
     Note over U,N: 1) Auth validation used by protected frontend routes
     U->>N: POST /api/auth/validate
@@ -205,6 +243,10 @@ sequenceDiagram
 
 | Frontend route | Backend service | Upstream endpoint |
 | --- | --- | --- |
+| POST /api/auth/login | auth-service | POST /v1/auth/login |
+| POST /api/auth/refresh | auth-service | POST /v1/auth/refresh |
+| POST /api/auth/logout | auth-service | POST /v1/auth/logout |
+| GET /api/auth/me | auth-service | GET /v1/auth/me |
 | POST /api/auth/validate | auth-service | POST /internal/v1/auth/validate |
 | POST /api/jam/create | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/create |
 | POST /api/jam/{jamId}/join | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/join |
@@ -225,6 +267,7 @@ sequenceDiagram
 ## Notes
 
 - Frontend route handlers normalize backend errors into a common envelope.
+- Frontend auth routes issue `auth_token` and `refresh_token` as HttpOnly cookies and enforce CSRF header matching for refresh/logout.
 - auth-service token validation is the shared gate for protected mutations.
 - api-service BFF treats auth and jam as required dependencies; catalog can degrade and still return partial orchestration data.
 - Orchestration is side-effect free. Playback mutations are accepted only on `POST /api/jam/{jamId}/playback/commands`; sending `playbackCommand` to orchestration returns `400 invalid_input`.

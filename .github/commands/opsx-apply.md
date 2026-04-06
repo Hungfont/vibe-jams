@@ -37,10 +37,6 @@ Implement tasks from an OpenSpec change.
        - Skills (as needed): `golang-patterns`, `kafka-engineer`, `redis-best-practices`, `tdd-workflow`
        - Rules: `.github/rules/backend/**` (plus `.github/rules/common/**` when needed)
        - Instructions: `.github/instructions/backend/be-*.instructions.md`
-    - **Agent (default)**:
-       - Auto load specific relevants agents via tasks.
-       - Auto load the relevants files for skills first before implementation.
-       - Load relevants rules, and instructions.
 
     Announce selected agent and loaded resource paths before coding.
 

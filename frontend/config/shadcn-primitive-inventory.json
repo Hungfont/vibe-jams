@@ -1,0 +1,22 @@
+{
+  "approvedPrimitives": [
+    "alert",
+    "avatar",
+    "badge",
+    "button",
+    "card",
+    "dialog",
+    "dropdown-menu",
+    "input",
+    "scroll-area",
+    "separator",
+    "skeleton",
+    "slider",
+    "tabs",
+    "toast",
+    "tooltip",
+    "use-toast"
+  ],
+  "sourceOfTruth": ".github/instructions/frontend/fe-shadcn-ui-only.instructions.md",
+  "notes": "Add a primitive here only when it is approved by frontend maintainers and aligned with shadcn usage conventions."
+}

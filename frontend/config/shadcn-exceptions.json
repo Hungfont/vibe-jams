@@ -1,0 +1,10 @@
+{
+  "exceptions": [
+    {
+      "componentPath": "src/components/ui/use-toast.ts",
+      "owner": "@frontend-guild",
+      "rationale": "Toast state hook pairs with toast primitive and has no direct standalone shadcn primitive equivalent.",
+      "reviewStatus": "approved"
+    }
+  ]
+}

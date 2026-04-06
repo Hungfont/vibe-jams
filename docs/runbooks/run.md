@@ -300,6 +300,62 @@ Validation evidence:
 5. `cd backend/rt-gateway && go test ./internal/server -run TestModerationTopicInvokesHookAndFansOut -count=1`
 6. `cd frontend && npm test -- jam-room-client.test.tsx`
 
+### Flow 12: Auth Login, Refresh Rotation, Logout, and Frontend Cookie Boundary
+
+Steps:
+1. User submits credential payload through frontend route `POST /api/auth/login`.
+2. Frontend route validates request with Zod and forwards to auth-service `POST /v1/auth/login`.
+3. Frontend sets `auth_token` and `refresh_token` as HttpOnly cookies, plus `csrf_token` cookie for state-changing auth calls.
+4. Frontend refresh path `POST /api/auth/refresh` requires `X-CSRF-Token` header matching `csrf_token` cookie and forwards refresh token to auth-service.
+5. auth-service rotates refresh token family; frontend rewrites cookies with rotated token pair.
+6. Frontend logout path `POST /api/auth/logout` also enforces CSRF match, revokes upstream refresh session, and clears all auth cookies.
+7. Frontend `GET /api/auth/me` returns normalized claims from auth-service while preserving frontend API boundary semantics.
+
+Expected outcome:
+1. Valid login returns claims envelope and cookie-backed auth context.
+2. Invalid login input returns deterministic `400 invalid_input`.
+3. Invalid credentials return deterministic `401 unauthorized` without leaking sensitive details.
+4. Refresh with valid CSRF + refresh context rotates session cookies successfully.
+5. Refresh/logout with missing or mismatched CSRF token returns deterministic `403 forbidden`.
+6. Logout clears cookies even when upstream session context is invalid.
+
+Edge cases:
+1. Upstream auth response shape drift is normalized to `502 dependency_invalid_response`.
+2. Missing refresh token context returns deterministic `401 unauthorized`.
+3. Refresh token replay is enforced upstream as unauthorized/reuse-detected semantics and returned through frontend envelope mapping.
+
+Validation evidence:
+1. `cd backend/auth-service && go test ./... -count=1`
+2. `cd frontend && bun run test -- src/components/auth/login-form.test.tsx src/app/api/auth/login/route.test.ts src/app/api/auth/refresh/route.test.ts`
+3. `cd frontend && bun run lint`
+4. `cd frontend && bun run build`
+
+### Flow 13: Frontend shadcn Primitive Conformance Enforcement
+
+Steps:
+1. Maintain approved primitive inventory in `frontend/config/shadcn-primitive-inventory.json`.
+2. Register only approved deviations in `frontend/config/shadcn-exceptions.json` with complete metadata (`componentPath`, `owner`, `rationale`, `reviewStatus`).
+3. Run `bun run check:shadcn` to validate primitive file naming, import conformance, and duplicate primitive detection.
+4. Run `bun run lint` to enforce conformance checker + eslint in one deterministic frontend gate.
+
+Expected outcome:
+1. Unknown primitives in `frontend/src/components/ui/**` fail validation unless covered by approved exception metadata.
+2. Duplicate primitive filenames outside `components/ui` fail validation with actionable file-path output.
+3. Imports to unapproved `@/components/ui/*` paths fail validation unless explicitly excepted.
+4. Fully conformant code paths pass `check:shadcn` and continue lint pipeline.
+
+Edge cases:
+1. Exception entries with missing owner/rationale/review status fail as configuration errors.
+2. Temporary exceptions remain valid only while explicitly tracked in exception registry.
+3. Test/spec files are excluded from conformance scanning to avoid false positives.
+
+Validation evidence:
+1. `cd frontend && bun run test -- src/lib/ui/governance.test.ts`
+2. `cd frontend && bun run check:shadcn`
+3. `cd frontend && bun run lint`
+4. `cd frontend && bun run test`
+5. `cd frontend && bun run build`
+
 ## Assumptions Logged
 
 1. This baseline excludes proposed but not-yet-implemented flows.

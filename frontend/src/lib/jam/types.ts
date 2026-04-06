@@ -2,6 +2,7 @@ export interface Claims {
   userId: string;
   plan: string;
   sessionState: string;
+  scope?: string[];
 }
 
 export interface SessionParticipant {
