@@ -85,7 +85,7 @@ func Load() (Config, error) {
 		SessionStorePostgresDSN:    strings.TrimSpace(os.Getenv("AUTH_SESSION_STORE_POSTGRES_DSN")),
 		SessionStorePostgresDriver: strings.ToLower(stringFromEnv("AUTH_SESSION_STORE_POSTGRES_DRIVER", defaultSessionStoreDriver)),
 		JWTActiveKeyID:             stringFromEnv("AUTH_JWT_ACTIVE_KID", defaultJWTActiveKeyID),
-		JWTActiveKeySecret:         strings.TrimSpace(os.Getenv("AUTH_JWT_ACTIVE_SECRET")),
+		JWTActiveKeySecret:         strings.TrimSpace(stringFromEnv("AUTH_JWT_ACTIVE_SECRET", "123456")),
 		JWTPreviousKeys:            strings.TrimSpace(os.Getenv("AUTH_JWT_PREVIOUS_KEYS")),
 		AccessTokenTTL:             accessTTL,
 		RefreshTokenTTL:            refreshTTL,
