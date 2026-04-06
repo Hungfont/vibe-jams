@@ -33,6 +33,7 @@ import { addQueueItem, kickParticipant, muteParticipant, removeQueueItem, reorde
 import { endJamSession, executePlayback, fetchJamState, fetchOrchestration, fetchRealtimeWsConfig } from "@/lib/jam/client";
 import { BLOCKING_CODES, type RoomTab } from "@/lib/jam/constants";
 import { isSnapshotRecovery, reduceRealtimeVersion, type RoomRealtimeEvent } from "@/lib/jam/realtime";
+import { bffOrchestrationDataSchema } from "@/lib/jam/schemas";
 import type { BffOrchestrationData, QueueSnapshot, SessionSnapshot } from "@/lib/jam/types";
 
 interface JamRoomClientProps {
@@ -49,7 +50,13 @@ async function loadRoom(jamId: string): Promise<BffOrchestrationData> {
   if (!envelope.success || !envelope.data) {
     throw new Error(envelope.error?.message ?? "Failed to load room");
   }
-  return envelope.data;
+
+  const parsed = bffOrchestrationDataSchema.safeParse(envelope.data);
+  if (!parsed.success) {
+    throw new Error("Invalid room payload from orchestration");
+  }
+
+  return parsed.data;
 }
 
 function mergeQueue(room: BffOrchestrationData, snapshot: QueueSnapshot): BffOrchestrationData {
@@ -81,8 +88,9 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
   });
 
   const room = swr.data;
-  const isEnded = room?.sessionState.session.status === "ended";
-  const isHost = room ? room.claims.userId === room.sessionState.session.hostUserId : false;
+  const hasRequiredRoomState = Boolean(room?.sessionState?.session && room?.sessionState?.queue);
+  const isEnded = room?.sessionState?.session?.status === "ended";
+  const isHost = Boolean(room?.claims?.userId && room?.sessionState?.session?.hostUserId && room.claims.userId === room.sessionState.session.hostUserId);
 
   const refreshSnapshot = React.useCallback(async () => {
     const state = await fetchJamState(jamId);
@@ -347,12 +355,12 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
     );
   }
 
-  if (!room) {
+  if (!room || !hasRequiredRoomState) {
     return (
       <main className="min-h-screen bg-black p-6">
         <Alert className="border-rose-500/60 bg-rose-950/40">
           <AlertTitle>Room unavailable</AlertTitle>
-          <AlertDescription>{initialError?.message ?? "Unable to load room state."}</AlertDescription>
+          <AlertDescription>{initialError?.message ?? "Unable to load valid room state."}</AlertDescription>
         </Alert>
       </main>
     );

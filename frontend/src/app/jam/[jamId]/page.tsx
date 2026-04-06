@@ -1,5 +1,7 @@
 import { JamRoomClient } from "@/components/jam/jam-room-client";
+import type { ApiEnvelope } from "@/lib/api/types";
 import { ROOM_TABS, type RoomTab } from "@/lib/jam/constants";
+import { bffOrchestrationDataSchema } from "@/lib/jam/schemas";
 import type { BffOrchestrationData } from "@/lib/jam/types";
 import { getAppBaseUrl, getRequestAuthHeaders } from "@/lib/api/server";
 
@@ -27,20 +29,27 @@ async function getInitialData(jamId: string): Promise<{
     cache: "no-store",
   });
 
-  const payload = (await response.json()) as {
-    success: boolean;
-    data?: BffOrchestrationData;
-    error?: { code: string; message: string };
-  };
+  const payload = (await response.json().catch(() => null)) as ApiEnvelope<unknown> | null;
 
-  if (!payload.success || !payload.data) {
+  if (!payload?.success || !payload.data) {
     return {
       initialData: null,
-      initialError: payload.error ?? { code: "internal_error", message: "Failed to load room" },
+      initialError: payload?.error ?? { code: "internal_error", message: "Failed to load room" },
     };
   }
 
-  return { initialData: payload.data };
+  const parsed = bffOrchestrationDataSchema.safeParse(payload.data);
+  if (!parsed.success) {
+    return {
+      initialData: null,
+      initialError: {
+        code: "dependency_invalid_response",
+        message: "Invalid room payload received from orchestration",
+      },
+    };
+  }
+
+  return { initialData: parsed.data };
 }
 
 function resolveView(raw: string | undefined): RoomTab {
