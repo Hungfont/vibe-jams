@@ -21,7 +21,7 @@ func NewService(auth AuthClient, jam JamClient, playback PlaybackClient, catalog
 	return &Service{auth: auth, jam: jam, playback: playback, catalog: catalog, featureEnabled: featureEnabled}
 }
 
-// Orchestrate executes auth, jam, playback, and catalog orchestration for one jam session.
+// Orchestrate executes read aggregation across auth, jam, and optional catalog for one jam session.
 func (s *Service) Orchestrate(ctx context.Context, jamID string, authHeader string, req OrchestrateRequest) (OrchestrateData, *ErrorBody, int) {
 	if !s.featureEnabled {
 		return OrchestrateData{}, &ErrorBody{Code: "service_unavailable", Message: "bff orchestration is disabled"}, 503
@@ -31,6 +31,9 @@ func (s *Service) Orchestrate(ctx context.Context, jamID string, authHeader stri
 	}
 	if strings.TrimSpace(authHeader) == "" {
 		return OrchestrateData{}, &ErrorBody{Code: "unauthorized", Message: "missing authorization"}, 401
+	}
+	if req.PlaybackCommand != nil {
+		return OrchestrateData{}, &ErrorBody{Code: "invalid_input", Message: "playbackCommand is not supported on orchestration endpoint"}, 400
 	}
 
 	claims, err := s.auth.ValidateBearerToken(ctx, authHeader)
@@ -65,24 +68,6 @@ func (s *Service) Orchestrate(ctx context.Context, jamID string, authHeader stri
 		} else {
 			data.Track = &lookup
 			data.DependencyStatuses["catalog"] = "ok"
-		}
-	}
-
-	if req.PlaybackCommand != nil {
-		playbackReq := *req.PlaybackCommand
-		if strings.TrimSpace(playbackReq.TrackID) == "" {
-			playbackReq.TrackID = strings.TrimSpace(req.TrackID)
-		}
-		accepted, playbackErr := s.playback.ExecuteCommand(ctx, jamID, authHeader, playbackReq)
-		if playbackErr != nil {
-			issue := optionalIssue("playback", playbackErr)
-			data.Partial = true
-			data.Issues = append(data.Issues, issue)
-			data.DependencyStatuses["playback"] = "degraded"
-			slog.Warn("optional dependency failed", "dependency", "playback", "code", issue.Code, "message", issue.Message)
-		} else {
-			data.Playback = &accepted
-			data.DependencyStatuses["playback"] = "ok"
 		}
 	}
 

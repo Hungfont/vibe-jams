@@ -157,10 +157,6 @@ sequenceDiagram
         B->>C: GET /internal/v1/catalog/tracks/{trackId} (optional)
         C-->>B: track lookup or degradation issue
     end
-    opt playbackCommand present
-        B->>P: POST /v1/jam/sessions/{jamId}/playback/commands (optional)
-        P-->>B: accepted or degradation issue
-    end
     B-->>N: OrchestrateData (partial possible)
     N-->>U: Envelope success/error
 ```
@@ -223,5 +219,6 @@ sequenceDiagram
 
 - Frontend route handlers normalize backend errors into a common envelope.
 - auth-service token validation is the shared gate for protected mutations.
-- api-service BFF treats auth and jam as required dependencies; catalog and playback can degrade and return partial orchestration data.
+- api-service BFF treats auth and jam as required dependencies; catalog can degrade and still return partial orchestration data.
+- Orchestration is side-effect free. Playback mutations are accepted only on `POST /api/jam/{jamId}/playback/commands`; sending `playbackCommand` to orchestration returns `400 invalid_input`.
 - rt-gateway fanout uses Kafka events and can recover client gaps by fetching jam-service state snapshots.

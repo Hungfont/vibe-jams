@@ -68,9 +68,9 @@ foreach ($service in $services) {
 
     $runCmd = ""
     if ($service.PortMode -eq "SERVER_ADDR") {
-        $runCmd = "set SERVER_ADDR=:$selectedPort && go run ./cmd/server"
+        $runCmd = "set ""SERVER_ADDR=:$selectedPort"" && go run ./cmd/server"
     } else {
-        $runCmd = "set SERVER_PORT=$selectedPort && go run ./cmd/server"
+        $runCmd = "set ""SERVER_PORT=$selectedPort"" && go run ./cmd/server"
     }
 
     $resolvedServices += @{

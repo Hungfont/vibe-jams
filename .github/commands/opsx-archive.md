@@ -9,16 +9,6 @@ Archive a completed change in the experimental workflow.
 
 **Input**: Optionally specify a change name after `/opsx:archive` (e.g., `/opsx:archive add-auth`). If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
 
-**Agent context setup (required)**
-
-Before archive checks, resolve active context:
-- Use **Agent (default)** context for archive orchestration and OpenSpec delta spec handling.
-- If archive requires domain updates before completion (frontend/backend follow-up), switch to matching custom agent for that domain and load mapped rules/instructions/skills.
-
-Mapped sources:
-- Frontend (if needed): `.github/rules/frontend/**,add `.github/rules/common/**` if needed `.github/instructions/frontend/fe-*.instructions.md` , relevant frontend skills
-- Backend (if needed): `.github/rules/backend/**`,add `.github/rules/common/**` if needed, `.github/instructions/backend/be-*.instructions.md`, relevant backend skills
-
 **Steps**
 
 1. **If no change name provided, prompt for selection**

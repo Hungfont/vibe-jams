@@ -4,7 +4,8 @@ import sharedauth "video-streaming/backend/shared/auth"
 
 // OrchestrateRequest is the BFF request payload for MVP orchestration.
 type OrchestrateRequest struct {
-	TrackID         string                  `json:"trackId,omitempty"`
+	TrackID string `json:"trackId,omitempty"`
+	// PlaybackCommand is retained to return deterministic invalid_input when provided.
 	PlaybackCommand *PlaybackCommandRequest `json:"playbackCommand,omitempty"`
 }
 
@@ -71,13 +72,12 @@ type LookupResponse struct {
 
 // OrchestrateData is aggregated BFF response payload.
 type OrchestrateData struct {
-	Claims             sharedauth.Claims        `json:"claims"`
-	SessionState       SessionStateSnapshot     `json:"sessionState"`
-	Track              *LookupResponse          `json:"track,omitempty"`
-	Playback           *PlaybackCommandAccepted `json:"playback,omitempty"`
-	Partial            bool                     `json:"partial"`
-	DependencyStatuses map[string]string        `json:"dependencyStatuses"`
-	Issues             []DependencyIssue        `json:"issues,omitempty"`
+	Claims             sharedauth.Claims    `json:"claims"`
+	SessionState       SessionStateSnapshot `json:"sessionState"`
+	Track              *LookupResponse      `json:"track,omitempty"`
+	Partial            bool                 `json:"partial"`
+	DependencyStatuses map[string]string    `json:"dependencyStatuses"`
+	Issues             []DependencyIssue    `json:"issues,omitempty"`
 }
 
 // DependencyIssue captures optional dependency degradation details.

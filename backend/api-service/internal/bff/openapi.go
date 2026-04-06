@@ -34,7 +34,7 @@ func openAPISpec() map[string]any {
 		"info": map[string]any{
 			"title":       "API Service BFF",
 			"version":     "1.0.0",
-			"description": "MVP orchestration entrypoint across auth, jam, playback, and catalog dependencies.",
+			"description": "MVP orchestration entrypoint across auth, jam, and optional catalog dependencies.",
 		},
 		"servers": []map[string]string{{"url": "http://localhost:8084"}},
 		"paths": map[string]any{
@@ -42,7 +42,7 @@ func openAPISpec() map[string]any {
 				"post": map[string]any{
 					"tags":        []string{"bff"},
 					"summary":     "Run MVP orchestration flow",
-					"description": "Validates auth, fetches jam state, and optionally executes catalog lookup and playback command.",
+					"description": "Validates auth, fetches jam state, and optionally enriches with catalog lookup.",
 					"operationId": "postSessionOrchestration",
 					"security":    []map[string][]string{{"bearerAuth": []string{}}},
 					"parameters": []map[string]any{
@@ -61,11 +61,6 @@ func openAPISpec() map[string]any {
 								"schema": map[string]string{"$ref": "#/components/schemas/OrchestrateRequest"},
 								"example": map[string]any{
 									"trackId": "trk_1",
-									"playbackCommand": map[string]any{
-										"command":              "pause",
-										"clientEventId":        "evt_web_1",
-										"expectedQueueVersion": 7,
-									},
 								},
 							},
 						},
@@ -99,20 +94,8 @@ func openAPISpec() map[string]any {
 				"OrchestrateRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"trackId":         map[string]string{"type": "string"},
-						"playbackCommand": map[string]string{"$ref": "#/components/schemas/PlaybackCommandRequest"},
+						"trackId": map[string]string{"type": "string"},
 					},
-				},
-				"PlaybackCommandRequest": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"command":              map[string]string{"type": "string"},
-						"trackId":              map[string]string{"type": "string"},
-						"clientEventId":        map[string]string{"type": "string"},
-						"expectedQueueVersion": map[string]string{"type": "integer", "format": "int64"},
-						"positionMs":           map[string]string{"type": "integer", "format": "int64"},
-					},
-					"required": []string{"command", "clientEventId", "expectedQueueVersion"},
 				},
 				"SuccessEnvelope": map[string]any{
 					"type": "object",
@@ -128,7 +111,6 @@ func openAPISpec() map[string]any {
 						"claims":             map[string]any{"type": "object"},
 						"sessionState":       map[string]any{"type": "object"},
 						"track":              map[string]any{"type": "object", "nullable": true},
-						"playback":           map[string]any{"type": "object", "nullable": true},
 						"partial":            map[string]string{"type": "boolean"},
 						"dependencyStatuses": map[string]any{"type": "object", "additionalProperties": map[string]string{"type": "string"}},
 						"issues":             map[string]any{"type": "array", "items": map[string]string{"$ref": "#/components/schemas/DependencyIssue"}},

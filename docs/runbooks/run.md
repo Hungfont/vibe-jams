@@ -216,31 +216,33 @@ Validation evidence:
 ### Flow 9: API-Service BFF Orchestration Entrypoint (ES-P1-009)
 
 Steps:
-1. Send `POST /v1/bff/mvp/sessions/{sessionId}/orchestration` with bearer token and optional `trackId` and `playbackCommand` payload.
+1. Send `POST /v1/bff/mvp/sessions/{sessionId}/orchestration` with bearer token and optional `trackId` payload.
 2. Validate and normalize auth claims through auth-service before any downstream orchestration work.
 3. Fetch jam session state from jam-service as a required dependency.
 4. If `trackId` is present, resolve catalog metadata through catalog-service as optional enrichment.
-5. If `playbackCommand` is present, forward command to playback-service as optional execution.
+5. Reject request with `400 invalid_input` when `playbackCommand` appears in orchestration payload.
 6. Aggregate dependency outputs into one deterministic BFF envelope with dependency status fields.
 
 Expected outcome:
 1. Successful required dependency path returns `200` with `success=true`, normalized `claims`, jam `sessionState`, and dependency status map.
 2. Required dependency timeout is normalized to `503` with `error.code=dependency_timeout` and failing dependency name.
 3. Required dependency unavailable path is normalized to `503` with `error.code=dependency_unavailable` and failing dependency name.
-4. Optional dependency failures keep `200` and set `data.partial=true`, add issue entries, and mark that dependency as `degraded`.
+4. Optional catalog failure keeps `200` and sets `data.partial=true`, adds issue entries, and marks `catalog` as `degraded`.
 
 Edge cases:
 1. Missing `Authorization` header returns `401 unauthorized` before downstream fan-out.
 2. Empty `sessionId` path parameter returns `400 invalid_input`.
 3. Invalid claim contract from auth validation is treated as `401 unauthorized`.
+4. `playbackCommand` in orchestration body returns `400 invalid_input` and no playback mutation is executed.
 
 Validation evidence:
 1. `cd backend/api-service && go test ./...`
 2. `cd backend/api-service && go test ./internal/bff -run TestOrchestrationSuccessAcrossDependencies -count=1`
 3. `cd backend/api-service && go test ./internal/bff -run TestOrchestrationTimeoutNormalizedForRequiredDependency -count=1`
 4. `cd backend/api-service && go test ./internal/bff -run TestOrchestrationOptionalFailureReturnsPartial -count=1`
-5. `cd backend/api-service && go test ./internal/bff -run TestHTTPAuthClientValidateBearerToken -count=1`
-6. `cd backend/api-service && go test ./internal/bff -run TestHTTPCatalogClientLookupTrack -count=1`
+5. `cd backend/api-service && go test ./internal/bff -run TestOrchestrationRejectsPlaybackCommandPayload -count=1`
+6. `cd backend/api-service && go test ./internal/bff -run TestHTTPAuthClientValidateBearerToken -count=1`
+7. `cd backend/api-service && go test ./internal/bff -run TestHTTPCatalogClientLookupTrack -count=1`
 
 ### Flow 10: Frontend Phase 1 Jam UI Routing and API Boundary
 

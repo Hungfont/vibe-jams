@@ -67,7 +67,6 @@ export interface BffOrchestrationData {
   claims: Claims;
   sessionState: SessionStateSnapshot;
   track?: TrackLookup;
-  playback?: PlaybackAccepted;
   partial: boolean;
   dependencyStatuses: Record<string, string>;
   issues?: BffIssue[];
