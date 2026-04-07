@@ -29,6 +29,56 @@ const swaggerUIHTML = `<!doctype html>
 </html>`
 
 func openAPISpec() map[string]any {
+	paths := map[string]any{
+		"/v1/bff/mvp/sessions/{sessionId}/orchestration": map[string]any{
+			"post": map[string]any{
+				"tags":        []string{"bff"},
+				"summary":     "Run MVP orchestration flow",
+				"description": "Validates auth, fetches jam state, and optionally enriches with catalog lookup.",
+				"operationId": "postSessionOrchestration",
+				"security":    []map[string][]string{{"bearerAuth": []string{}}},
+				"parameters": []map[string]any{
+					{
+						"name":        "sessionId",
+						"in":          "path",
+						"required":    true,
+						"description": "Jam session identifier",
+						"schema":      map[string]string{"type": "string"},
+					},
+				},
+				"requestBody": map[string]any{
+					"required": false,
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]string{"$ref": "#/components/schemas/OrchestrateRequest"},
+							"example": map[string]any{
+								"trackId": "trk_1",
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"200": map[string]any{
+						"description": "Orchestration success (full or partial)",
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]string{"$ref": "#/components/schemas/SuccessEnvelope"},
+							},
+						},
+					},
+					"400": errorResponse("Invalid request input"),
+					"401": errorResponse("Unauthorized"),
+					"404": errorResponse("Required dependency not found"),
+					"503": errorResponse("Dependency timeout or unavailable"),
+				},
+			},
+		},
+	}
+
+	for route, spec := range delegatedBFFRouteSpecs() {
+		paths[route] = spec
+	}
+
 	return map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
@@ -37,51 +87,7 @@ func openAPISpec() map[string]any {
 			"description": "MVP orchestration entrypoint across auth, jam, and optional catalog dependencies.",
 		},
 		"servers": []map[string]string{{"url": "http://localhost:8084"}},
-		"paths": map[string]any{
-			"/v1/bff/mvp/sessions/{sessionId}/orchestration": map[string]any{
-				"post": map[string]any{
-					"tags":        []string{"bff"},
-					"summary":     "Run MVP orchestration flow",
-					"description": "Validates auth, fetches jam state, and optionally enriches with catalog lookup.",
-					"operationId": "postSessionOrchestration",
-					"security":    []map[string][]string{{"bearerAuth": []string{}}},
-					"parameters": []map[string]any{
-						{
-							"name":        "sessionId",
-							"in":          "path",
-							"required":    true,
-							"description": "Jam session identifier",
-							"schema":      map[string]string{"type": "string"},
-						},
-					},
-					"requestBody": map[string]any{
-						"required": false,
-						"content": map[string]any{
-							"application/json": map[string]any{
-								"schema": map[string]string{"$ref": "#/components/schemas/OrchestrateRequest"},
-								"example": map[string]any{
-									"trackId": "trk_1",
-								},
-							},
-						},
-					},
-					"responses": map[string]any{
-						"200": map[string]any{
-							"description": "Orchestration success (full or partial)",
-							"content": map[string]any{
-								"application/json": map[string]any{
-									"schema": map[string]string{"$ref": "#/components/schemas/SuccessEnvelope"},
-								},
-							},
-						},
-						"400": errorResponse("Invalid request input"),
-						"401": errorResponse("Unauthorized"),
-						"404": errorResponse("Required dependency not found"),
-						"503": errorResponse("Dependency timeout or unavailable"),
-					},
-				},
-			},
-		},
+		"paths":   paths,
 		"components": map[string]any{
 			"securitySchemes": map[string]any{
 				"bearerAuth": map[string]string{
@@ -146,6 +152,152 @@ func openAPISpec() map[string]any {
 			},
 		},
 	}
+}
+
+func delegatedBFFRouteSpecs() map[string]any {
+	jamIDPathParam := map[string]any{
+		"name":        "jamId",
+		"in":          "path",
+		"required":    true,
+		"description": "Jam identifier",
+		"schema":      map[string]string{"type": "string"},
+	}
+	trackIDPathParam := map[string]any{
+		"name":        "trackId",
+		"in":          "path",
+		"required":    true,
+		"description": "Track identifier",
+		"schema":      map[string]string{"type": "string"},
+	}
+
+	return map[string]any{
+		"/api/v1/jams/create": bffDelegatedOperation(httpMethodPost, "Create jam session", nil),
+		"/api/v1/jams/{jamId}/join": bffDelegatedOperation(
+			httpMethodPost,
+			"Join jam session",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/api/v1/jams/{jamId}/leave": bffDelegatedOperation(
+			httpMethodPost,
+			"Leave jam session",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/api/v1/jams/{jamId}/end": bffDelegatedOperation(
+			httpMethodPost,
+			"End jam session",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/api/v1/jams/{jamId}/state": bffDelegatedOperation(
+			httpMethodGet,
+			"Get jam session state",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/api/v1/jams/{jamId}/queue/snapshot": bffDelegatedOperation(
+			httpMethodGet,
+			"Get queue snapshot",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/api/v1/jams/{jamId}/queue/add": bffDelegatedOperation(
+			httpMethodPost,
+			"Add queue item",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/api/v1/jams/{jamId}/queue/remove": bffDelegatedOperation(
+			httpMethodPost,
+			"Remove queue item",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/api/v1/jams/{jamId}/queue/reorder": bffDelegatedOperation(
+			httpMethodPost,
+			"Reorder queue items",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/api/v1/jams/{jamId}/moderation/mute": bffDelegatedOperation(
+			httpMethodPost,
+			"Mute participant",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/api/v1/jams/{jamId}/moderation/kick": bffDelegatedOperation(
+			httpMethodPost,
+			"Kick participant",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/v1/jam/sessions/{jamId}/playback/commands": bffDelegatedOperation(
+			httpMethodPost,
+			"Send playback command",
+			[]map[string]any{jamIDPathParam},
+		),
+		"/internal/v1/catalog/tracks/{trackId}": bffDelegatedOperation(
+			httpMethodGet,
+			"Lookup catalog track",
+			[]map[string]any{trackIDPathParam},
+		),
+		"/v1/bff/mvp/realtime/ws-config": bffDelegatedOperation(
+			httpMethodGet,
+			"Resolve realtime websocket config",
+			[]map[string]any{
+				{
+					"name":        "sessionId",
+					"in":          "query",
+					"required":    true,
+					"description": "Jam session identifier",
+					"schema":      map[string]string{"type": "string"},
+				},
+				{
+					"name":        "lastSeenVersion",
+					"in":          "query",
+					"required":    false,
+					"description": "Client-side cursor version",
+					"schema":      map[string]string{"type": "string"},
+				},
+			},
+		),
+		"/v1/bff/mvp/realtime/ws": bffDelegatedOperation(
+			httpMethodGet,
+			"Proxy realtime websocket connect path to rt-gateway",
+			[]map[string]any{
+				{
+					"name":        "sessionId",
+					"in":          "query",
+					"required":    true,
+					"description": "Jam session identifier",
+					"schema":      map[string]string{"type": "string"},
+				},
+				{
+					"name":        "lastSeenVersion",
+					"in":          "query",
+					"required":    false,
+					"description": "Client-side cursor version",
+					"schema":      map[string]string{"type": "string"},
+				},
+			},
+		),
+	}
+}
+
+const (
+	httpMethodGet  = "get"
+	httpMethodPost = "post"
+)
+
+func bffDelegatedOperation(method, summary string, parameters []map[string]any) map[string]any {
+	operation := map[string]any{
+		"tags":     []string{"bff-delegated"},
+		"summary":  summary,
+		"security": []map[string][]string{{"bearerAuth": []string{}}},
+		"responses": map[string]any{
+			"200": map[string]any{"description": "Delegated upstream response"},
+			"400": errorResponse("Invalid request input"),
+			"401": errorResponse("Unauthorized"),
+			"404": errorResponse("Resource not found"),
+			"503": errorResponse("Dependency unavailable"),
+		},
+	}
+	if len(parameters) > 0 {
+		operation["parameters"] = parameters
+	}
+
+	return map[string]any{method: operation}
 }
 
 func errorResponse(description string) map[string]any {

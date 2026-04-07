@@ -11,6 +11,8 @@ Run a fullstack OpenSpec-driven workflow from requirement review to integrated i
 
 **IMPORTANT**: Do NOT guess or auto-select a change. Always let the user choose.
 
+<!-- ALWAYS project flows will apply the strictly flow with #Sequence1: HTTP Request/Response Flow in `docs/frontend-backend-sequence.md` files and never update this sequence for any request unless explicitly requested. -->
+
 **Primary path (always)**: `/opsx-propose` → approval gate → `/opsx:apply` (then `/opsx:archive` when complete).
 
 ## Workflow

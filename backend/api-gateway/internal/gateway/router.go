@@ -40,6 +40,33 @@ func NewRouter(cfg config.Config) (http.Handler, error) {
 		_, _ = w.Write(body)
 	})
 
+	mux.HandleFunc("/swagger", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(gatewaySwaggerUIHTML))
+	})
+	mux.HandleFunc("/swagger/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/swagger", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("/swagger/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := marshalGatewayOpenAPISpec()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	})
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), upstreamTimeout)
 		defer cancel()

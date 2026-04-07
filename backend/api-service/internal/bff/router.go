@@ -19,9 +19,18 @@ func NewRouter(cfg config.Config) (http.Handler, error) {
 
 	service := NewService(jamClient, playbackClient, catalogClient, cfg.FeatureBFFEnabled)
 	handler := NewHandler(service)
+	proxyHandler, err := NewProxyHandler(cfg)
+	if err != nil {
+		return nil, err
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/bff/mvp/sessions/", handler)
+	mux.Handle("/api/v1/jams/", proxyHandler)
+	mux.Handle("/v1/jam/sessions/", proxyHandler)
+	mux.Handle("/internal/v1/catalog/tracks/", proxyHandler)
+	mux.Handle("/v1/bff/mvp/realtime/ws", proxyHandler)
+	mux.Handle("/v1/bff/mvp/realtime/ws-config", proxyHandler)
 	mux.HandleFunc("/swagger", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

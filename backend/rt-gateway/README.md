@@ -8,6 +8,8 @@ Realtime websocket fanout gateway for Jam session updates.
 - `GET /metrics/fanout`
 - `GET /ws?sessionId=<id>&lastSeenVersion=<optional-int>`
 
+> In current frontend architecture, browser websocket ingress is mediated by `api-gateway -> api-service (BFF)` proxy path (`/v1/bff/mvp/realtime/ws`). Direct browser targeting of rt-gateway `/ws` is non-compliant.
+
 ## Fanout Behavior
 
 - Subscriptions are room-scoped by `jam:{sessionId}`.

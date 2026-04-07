@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -30,7 +31,7 @@ type validateClaims struct {
 }
 
 // authnMiddleware enforces Bearer token validation for non-public routes.
-// On success it injects X-Auth-* headers and strips Authorization before forwarding.
+// On success it injects X-Auth-* headers and preserves Authorization for downstream compatibility.
 type authnMiddleware struct {
 	authBaseURL string
 	authClient  *http.Client
@@ -58,7 +59,7 @@ func (m *authnMiddleware) apply(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 
-	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	authHeader, fromCookie := resolveAuthHeader(r)
 	if authHeader == "" {
 		writeError(w, http.StatusUnauthorized, "missing_credentials", "missing authorization")
 		return false
@@ -79,8 +80,11 @@ func (m *authnMiddleware) apply(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
-	// Strip raw token and inject verified claim headers.
-	r.Header.Del("Authorization")
+	// Preserve Authorization for downstream services that still validate bearer tokens,
+	// and inject verified claim headers for services that trust gateway identity context.
+	if fromCookie {
+		r.Header.Set("Authorization", authHeader)
+	}
 	r.Header.Set("X-Auth-UserId", claims.UserID)
 	r.Header.Set("X-Auth-Plan", claims.Plan)
 	r.Header.Set("X-Auth-SessionState", claims.SessionState)
@@ -137,6 +141,45 @@ func isPublicRoute(method, path string) bool {
 		}
 	}
 	return false
+}
+
+func resolveAuthHeader(r *http.Request) (header string, fromCookie bool) {
+	header = strings.TrimSpace(r.Header.Get("Authorization"))
+	if header != "" {
+		return header, false
+	}
+
+	cookieToken := resolveAuthCookieToken(r)
+	if cookieToken == "" {
+		return "", false
+	}
+
+	return "Bearer " + cookieToken, true
+}
+
+func resolveAuthCookieToken(r *http.Request) string {
+	for _, cookieName := range []string{"auth_token", "token"} {
+		cookie, err := r.Cookie(cookieName)
+		if err != nil {
+			continue
+		}
+		value := strings.TrimSpace(cookie.Value)
+		if value == "" {
+			continue
+		}
+
+		decoded, err := url.QueryUnescape(value)
+		if err == nil {
+			decoded = strings.TrimSpace(decoded)
+			if decoded != "" {
+				return decoded
+			}
+		}
+
+		return value
+	}
+
+	return ""
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {

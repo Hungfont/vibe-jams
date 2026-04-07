@@ -218,30 +218,34 @@ Validation evidence:
 **Entry point**: `api-gateway` (port 8085) is the sole public ingress. Direct external calls to `api-service` are blocked at the network layer.
 
 Steps:
-1. Client sends `POST /v1/bff/mvp/sessions/{sessionId}/orchestration` with `Authorization: Bearer <token>` to api-gateway.
+1. Client sends protected gateway route request (for example `POST /v1/bff/mvp/sessions/{sessionId}/orchestration`) with `Authorization: Bearer <token>` or with `auth_token`/`token` cookie when header auth is absent.
 2. api-gateway strips any client-supplied `X-Auth-*` headers (spoof prevention).
-3. api-gateway calls `POST /internal/v1/auth/validate` on auth-service with the bearer token; applies `GATEWAY_TIMEOUT_AUTH_MS` timeout.
-4. On validate success, api-gateway checks `sessionState == "valid"`; strips `Authorization`; injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` into the forwarded request.
-5. api-gateway proxies the request to api-service.
-6. api-service reads identity from `X-Auth-*` headers (does not call auth-service); rejects if `X-Auth-UserId` is absent or `sessionState` is not `valid`.
-7. api-service fetches jam session state from jam-service as a required dependency, forwarding `X-Auth-*` headers.
-8. If `trackId` is present, api-service resolves catalog metadata as optional enrichment.
-9. Reject request with `400 invalid_input` when `playbackCommand` appears in orchestration payload.
-10. Aggregate dependency outputs into one deterministic BFF envelope.
+3. api-gateway resolves auth credentials by preferring `Authorization`, then falling back to `auth_token`/`token` cookie values.
+4. api-gateway calls `POST /internal/v1/auth/validate` on auth-service with the resolved bearer token; applies `GATEWAY_TIMEOUT_AUTH_MS` timeout.
+5. On validate success, api-gateway checks `sessionState == "valid"`; injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` into the forwarded request.
+6. api-gateway proxies the request to api-service while preserving `Authorization` for migration compatibility.
+7. api-service reads identity from `X-Auth-*` headers (does not call auth-service); rejects orchestration calls if `X-Auth-UserId` is absent or `sessionState` is not `valid`.
+8. api-service fetches jam session state from jam-service as a required dependency, forwarding `X-Auth-*` headers.
+9. If `trackId` is present, api-service resolves catalog metadata as optional enrichment.
+10. Reject request with `400 invalid_input` when `playbackCommand` appears in orchestration payload.
+11. Aggregate dependency outputs into one deterministic BFF envelope.
 
 Expected outcome:
 1. Successful path returns `200` with `success=true`, normalized `claims` (from `X-Auth-*` headers), jam `sessionState`, and dependency status map.
 2. Missing/invalid token → api-gateway returns `401 invalid_token` before forwarding.
-3. auth-service timeout → api-gateway returns `503 auth_service_unavailable`.
-4. Revoked session (`sessionState != valid`) → api-gateway returns `401 invalid_token`.
-5. Required dependency (jam) timeout → api-service returns `503 dependency_timeout`.
-6. Optional catalog failure → api-service returns `200` with `data.partial=true`.
+3. Missing both `Authorization` and supported auth cookies → api-gateway returns `401 missing_credentials` before forwarding.
+4. auth-service timeout → api-gateway returns `503 auth_service_unavailable`.
+5. Revoked session (`sessionState != valid`) → api-gateway returns `401 invalid_token`.
+6. Required dependency (jam) timeout → api-service returns `503 dependency_timeout`.
+7. Optional catalog failure → api-service returns `200` with `data.partial=true`.
 
 Edge cases:
 1. Client-injected `X-Auth-UserId` is stripped by api-gateway and replaced with validated value.
 2. Request reaching api-service without `X-Auth-UserId` (gateway bypassed) returns `401 unauthorized`.
 3. Empty `sessionId` path parameter returns `400 invalid_input`.
 4. `playbackCommand` in orchestration body returns `400 invalid_input`.
+5. During migration compatibility, `Authorization` is preserved while `X-Auth-*` headers are injected for downstream path transition.
+6. When both `Authorization` and auth cookie are present, gateway validates using `Authorization` value first.
 
 Startup order:
 1. `auth-service` (port 8081)
@@ -256,6 +260,32 @@ Validation evidence:
 5. `go test video-streaming/backend/api-service/internal/bff -run TestOrchestrationRejectsMissingIdentityHeaders -count=1`
 6. `go test video-streaming/backend/api-service/internal/bff -run TestOrchestrationRejectsPlaybackCommandPayload -count=1`
 7. `go test video-streaming/backend/api-service/internal/bff -run TestHTTPCatalogClientLookupTrack -count=1`
+8. `go test video-streaming/backend/api-gateway/internal/gateway -run TestIntegration_CookieFallback_ProxiesToAPIService -count=1`
+9. `go test video-streaming/backend/api-gateway/internal/gateway -run TestIntegration_OpenAPIJSONRoute_IsPublicAndServed -count=1`
+10. `go test video-streaming/backend/api-service/internal/bff -run TestOpenAPISpec_IncludesDelegatedBFFRouteFamilies -count=1`
+11. `cd frontend && bun run test -- src/app/api/realtime/ws-config/route.test.ts`
+
+### Flow 14: Gateway and API-Service Swagger/OpenAPI Operational Visibility
+
+Steps:
+1. Open api-gateway Swagger UI at `GET /swagger` and fetch OpenAPI JSON at `GET /swagger/openapi.json`.
+2. Open api-service Swagger UI at `GET /swagger` and fetch OpenAPI JSON at `GET /swagger/openapi.json`.
+3. Verify gateway spec includes health and representative delegated ingress route families.
+4. Verify api-service spec includes orchestration plus delegated jam/playback/catalog/realtime route families used by BFF-first frontend calls.
+
+Expected outcome:
+1. Swagger UI pages render without auth gating on operational doc routes.
+2. OpenAPI JSON responses return `200` and include expected route families.
+3. Spec coverage reflects current BFF-first routing behavior.
+
+Edge cases:
+1. Unsupported methods on `/swagger` or `/swagger/openapi.json` return `405 method not allowed`.
+2. OpenAPI marshal failures return deterministic `500` responses.
+
+Validation evidence:
+1. `go test video-streaming/backend/api-gateway/internal/gateway -run TestIntegration_SwaggerUIRoute_IsPublicAndServed -count=1`
+2. `go test video-streaming/backend/api-gateway/internal/gateway -run TestIntegration_OpenAPIJSONRoute_IsPublicAndServed -count=1`
+3. `go test video-streaming/backend/api-service/internal/bff -run TestRouter_SwaggerAndOpenAPIRoutes_AreServed -count=1`
 
 ### Flow 10: Frontend Phase 1 Jam UI Routing and API Boundary
 
@@ -263,14 +293,17 @@ Steps:
 1. Open Lobby page (`/`) and validate create/join actions call frontend API routes only.
 2. Create a jam and verify redirect to `/jam/{jamId}`.
 3. On Jam Room page, verify queue/playback/participants/diagnostics sections render from orchestration state.
-4. Trigger queue and playback interactions and confirm client calls stay within `/api/*` route boundary.
-5. Verify realtime bootstrap uses `/api/realtime/ws-config` before websocket connect.
+4. Trigger queue, playback, and catalog interactions and confirm client calls stay within `/api/*` route boundary.
+5. Verify non-auth frontend API routes are delegated through `api-gateway -> api-service (BFF)` before downstream service calls.
+6. Verify realtime bootstrap uses `/api/realtime/ws-config` and resolves ws config through BFF before websocket connect.
+7. Verify websocket connect uses `WS /v1/bff/mvp/realtime/ws` through `api-gateway -> api-service (BFF) -> rt-gateway` and does not target rt-gateway directly.
 
 Expected outcome:
 1. Lobby and Jam Room render without compile/runtime errors.
 2. Browser-side callers use frontend API routes only (no direct backend service URL usage).
 3. Room UI surfaces degraded or blocking errors in diagnostics and alerts when present.
 4. Queue and playback controls enforce host/session-ended guard behavior at UI level.
+5. Realtime ws bootstrap configuration is sourced through BFF-first HTTP hop and websocket ingress is routed through gateway/BFF proxy path.
 
 Edge cases:
 1. Invalid jam ID in lobby join form is rejected client-side.
@@ -280,6 +313,27 @@ Validation evidence:
 1. `cd frontend && bun lint`
 2. `cd frontend && bun build`
 3. `cd frontend && bun test`
+
+### Flow 15: Realtime Websocket Ingress Through Gateway/BFF Proxy
+
+Steps:
+1. Request realtime bootstrap config via frontend route `GET /api/realtime/ws-config`.
+2. Verify returned `wsUrl` points to gateway/BFF websocket path (`/v1/bff/mvp/realtime/ws`) instead of direct rt-gateway `/ws`.
+3. Open websocket using returned `wsUrl` with `sessionId` and `lastSeenVersion` query parameters.
+4. Verify ingress path is proxied `api-gateway -> api-service (BFF) -> rt-gateway /ws`.
+
+Expected outcome:
+1. Frontend never targets direct rt-gateway websocket URL.
+2. Realtime fanout semantics (ordered delivery, gap recovery) remain unchanged after proxy ingress.
+
+Edge cases:
+1. Missing `sessionId` still fails deterministically at bootstrap route.
+2. Non-websocket-compatible method on BFF websocket path is rejected deterministically.
+
+Validation evidence:
+1. `go test video-streaming/backend/api-service/internal/bff -run TestProxyHandler_RealtimeWSProxy_RewritesToRTGatewayWSPath -count=1`
+2. `go test video-streaming/backend/api-service/internal/bff -run TestProxyHandler_RealtimeWSConfig -count=1`
+3. `cd frontend && bun run test -- src/app/api/realtime/ws-config/route.test.ts`
 
 ### Flow 11: Moderation Controls (Mute/Kick, Realtime Visibility, Blocked Actions)
 

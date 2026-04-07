@@ -29,7 +29,7 @@ export async function POST(
 
   const { jamId } = await context.params;
   const result = await backendJson<PlaybackAccepted>({
-    service: "playback",
+    service: "gateway",
     path: `/v1/jam/sessions/${encodeURIComponent(jamId)}/playback/commands`,
     method: "POST",
     body: parsed.data,

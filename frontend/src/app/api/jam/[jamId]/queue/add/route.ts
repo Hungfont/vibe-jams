@@ -29,7 +29,7 @@ export async function POST(
 
   const { jamId } = await context.params;
   const result = await backendJson<QueueSnapshot>({
-    service: "jam",
+    service: "gateway",
     path: `/api/v1/jams/${encodeURIComponent(jamId)}/queue/add`,
     method: "POST",
     body: {

@@ -16,6 +16,9 @@ func TestLoadDefaultConfig(t *testing.T) {
 	if !cfg.FeatureBFFEnabled {
 		t.Fatal("expected FEATURE_BFF_ENABLED default true")
 	}
+	if cfg.GatewayPublicURL != defaultGatewayPublicURL {
+		t.Fatalf("GatewayPublicURL mismatch: got %q want %q", cfg.GatewayPublicURL, defaultGatewayPublicURL)
+	}
 }
 
 func TestLoadRejectsInvalidTimeout(t *testing.T) {
@@ -24,5 +27,21 @@ func TestLoadRejectsInvalidTimeout(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected validation error for invalid timeout")
+	}
+}
+
+func TestLoadRejectsMissingGatewayPublicURL(t *testing.T) {
+	t.Setenv("GATEWAY_PUBLIC_URL", "")
+	t.Setenv("JAM_SERVICE_URL", "http://localhost:8080")
+	t.Setenv("PLAYBACK_SERVICE_URL", "http://localhost:8082")
+	t.Setenv("CATALOG_SERVICE_URL", "http://localhost:8083")
+	t.Setenv("RT_GATEWAY_URL", "http://localhost:8086")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("expected default gateway public URL fallback, got error: %v", err)
+	}
+	if cfg.GatewayPublicURL == "" {
+		t.Fatal("GatewayPublicURL must not be empty")
 	}
 }

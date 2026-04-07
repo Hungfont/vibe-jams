@@ -22,7 +22,7 @@ export async function POST(
 
   const { jamId } = await context.params;
   const result = await backendJson<SessionSnapshot>({
-    service: "jam",
+    service: "gateway",
     path: `/api/v1/jams/${encodeURIComponent(jamId)}/leave`,
     method: "POST",
     authHeader: auth.authHeader,

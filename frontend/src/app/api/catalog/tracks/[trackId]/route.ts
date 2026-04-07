@@ -14,7 +14,7 @@ export async function GET(
   }
 
   const result = await backendJson<TrackLookup>({
-    service: "catalog",
+    service: "gateway",
     path: `/internal/v1/catalog/tracks/${encodeURIComponent(trackId)}`,
     method: "GET",
   });

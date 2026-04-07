@@ -29,7 +29,7 @@ export async function POST(
 
   const { jamId } = await context.params;
   const result = await backendJson<SessionSnapshot>({
-    service: "jam",
+    service: "gateway",
     path: `/api/v1/jams/${encodeURIComponent(jamId)}/moderation/kick`,
     method: "POST",
     body: parsed.data,

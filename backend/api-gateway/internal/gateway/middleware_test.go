@@ -125,8 +125,8 @@ func TestAuthnMiddleware_ValidToken_InjectsHeaders(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected middleware to pass request; response: %d", rec.Code)
 	}
-	if req.Header.Get("Authorization") != "" {
-		t.Fatal("Authorization header should be stripped after successful validation")
+	if req.Header.Get("Authorization") != "Bearer valid-token" {
+		t.Fatalf("Authorization header should be preserved after successful validation: got %q", req.Header.Get("Authorization"))
 	}
 	if req.Header.Get("X-Auth-UserId") != "user_1" {
 		t.Fatalf("X-Auth-UserId mismatch: got %q", req.Header.Get("X-Auth-UserId"))
@@ -139,6 +139,56 @@ func TestAuthnMiddleware_ValidToken_InjectsHeaders(t *testing.T) {
 	}
 	if req.Header.Get("X-Auth-Scope") != "jam:read,jam:control" {
 		t.Fatalf("X-Auth-Scope mismatch: got %q", req.Header.Get("X-Auth-Scope"))
+	}
+}
+
+func TestAuthnMiddleware_CookieFallback_InjectsAuthorizationAndHeaders(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"userId":"user_cookie","plan":"premium","sessionState":"valid"}`))
+	}))
+	defer ts.Close()
+
+	m := newTestMiddleware(ts.URL)
+	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
+	req.Header.Set("Cookie", "auth_token=cookie-valid-token")
+	rec := httptest.NewRecorder()
+
+	ok := m.apply(rec, req)
+	if !ok {
+		t.Fatalf("expected middleware to pass request; response: %d", rec.Code)
+	}
+	if req.Header.Get("Authorization") != "Bearer cookie-valid-token" {
+		t.Fatalf("Authorization header should be set from cookie fallback: got %q", req.Header.Get("Authorization"))
+	}
+	if req.Header.Get("X-Auth-UserId") != "user_cookie" {
+		t.Fatalf("X-Auth-UserId mismatch: got %q", req.Header.Get("X-Auth-UserId"))
+	}
+}
+
+func TestAuthnMiddleware_AuthorizationHeaderPrecedenceOverCookie(t *testing.T) {
+	t.Parallel()
+
+	var validateAuthorization string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		validateAuthorization = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"userId":"user_priority","plan":"premium","sessionState":"valid"}`))
+	}))
+	defer ts.Close()
+
+	m := newTestMiddleware(ts.URL)
+	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
+	req.Header.Set("Authorization", "Bearer header-token")
+	req.Header.Set("Cookie", "auth_token=cookie-token")
+	rec := httptest.NewRecorder()
+
+	ok := m.apply(rec, req)
+	if !ok {
+		t.Fatalf("expected middleware to pass request; response: %d", rec.Code)
+	}
+	if validateAuthorization != "Bearer header-token" {
+		t.Fatalf("middleware should validate using Authorization header before cookie token: got %q", validateAuthorization)
 	}
 }
 

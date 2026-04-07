@@ -15,15 +15,15 @@ The frontend SHALL provide URL-scoped page behavior for lobby and jam room exper
 - **THEN** the frontend provides room shell behavior with queue, playback, participants, and diagnostics views bound to that session
 
 ### Requirement: Browser calls SHALL use frontend API routes as the only backend access boundary
-The frontend SHALL route all browser-initiated requests through App Router API endpoints and MUST NOT call backend service domains directly from browser components.
+The frontend SHALL route all browser-initiated requests through App Router API endpoints and MUST NOT call backend service domains directly from browser components. For non-auth microservice HTTP calls, frontend server routes MUST route through api-service BFF first via api-gateway.
 
 #### Scenario: Browser submits protected action
-- **WHEN** a user triggers create, join, queue, playback, or orchestration actions
-- **THEN** the browser calls a frontend API route that forwards session context and maps responses to normalized envelope fields
+- **WHEN** a user triggers create, join, queue, playback, catalog lookup, or orchestration actions
+- **THEN** the browser calls a frontend API route that forwards through `api-gateway -> api-service BFF` before downstream microservice delegation
 
-#### Scenario: Direct backend URL usage attempted
-- **WHEN** a browser component attempts to call backend service endpoints directly
-- **THEN** the implementation is considered non-compliant with this requirement
+#### Scenario: Direct downstream call bypassing BFF attempted
+- **WHEN** a frontend server route attempts to call jam-service, playback-service, catalog-service, or realtime bootstrap endpoint directly for non-auth flows
+- **THEN** the implementation is non-compliant with this requirement
 
 ### Requirement: Lobby page SHALL support create and join flows with auth and entitlement gating
 The lobby page SHALL provide create and join actions, SHALL validate auth context before protected requests, and SHALL navigate to jam room on success.
@@ -70,11 +70,11 @@ Playback controls SHALL only permit host command execution and SHALL map unautho
 - **THEN** command is blocked with host-only reason and no state transition is applied
 
 ### Requirement: Realtime synchronization SHALL apply monotonic event updates and snapshot fallback recovery
-Jam room realtime state SHALL process only monotonic aggregateVersion updates, SHALL ignore stale or duplicate events, and SHALL recover via snapshot when gaps or stale reconnect cursors are detected.
+Jam room realtime state SHALL process only monotonic aggregateVersion updates, SHALL ignore stale or duplicate events, and SHALL recover via snapshot when gaps or stale reconnect cursors are detected. Realtime bootstrap configuration MUST be fetched through BFF-first HTTP flow.
 
-#### Scenario: Monotonic event stream
-- **WHEN** incoming event version equals local version plus one
-- **THEN** the event is applied to room projection and local version advances
+#### Scenario: Realtime bootstrap configuration path
+- **WHEN** frontend requests realtime ws bootstrap config
+- **THEN** frontend route forwards via `api-gateway -> api-service BFF` before returning ws config to client for direct websocket connect
 
 #### Scenario: Gap or stale reconnect
 - **WHEN** gap is detected or reconnect cursor is stale

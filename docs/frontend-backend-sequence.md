@@ -173,32 +173,42 @@ sequenceDiagram
     G-->>N: upstream response
     N-->>U: Envelope success/error
 
-    Note over U,N: 1) Auth validation used by protected frontend routes
+    Note over U,N: 1) Auth validation API route (authN/authZ flow)
     U->>N: POST /api/auth/validate
-    N->>A: POST /internal/v1/auth/validate
-    A-->>N: 200 claims or 401
+    N->>G: POST /internal/v1/auth/validate
+    G->>A: POST /internal/v1/auth/validate
+    A-->>G: 200 claims or 401
+    G-->>N: upstream response
     N-->>U: Envelope success/error
 
-    Note over U,N: 2) Jam create/join/leave/end, queue, and moderation actions
+    Note over U,N: 2) Mandatory BFF-first hop for all microservice HTTP calls
     U->>N: POST /api/jam/create (or join/leave/end/queue/*/moderation/*)
-    N->>A: POST /internal/v1/auth/validate
-    A-->>N: claims
-    N->>J: /api/v1/jams/... endpoint
-    J-->>N: session/queue response
+    N->>G: POST /v1/bff/mvp/sessions/{jamId}/commands
+    G->>A: POST /internal/v1/auth/validate (token verification)
+    A-->>G: 200 claims or 401
+    G->>B: POST /v1/bff/mvp/sessions/{jamId}/commands (X-Auth-* headers)
+    B->>J: /api/v1/jams/... endpoint
+    J-->>B: session/queue response
+    B-->>G: normalized result
+    G-->>N: upstream response
     N-->>U: Envelope success/error
 
-    Note over U,N: 3) Playback command flow
     U->>N: POST /api/jam/{jamId}/playback/commands
-    N->>A: POST /internal/v1/auth/validate
-    A-->>N: claims
-    N->>P: POST /v1/jam/sessions/{jamId}/playback/commands
-    P-->>N: 202 accepted or error
+    N->>G: POST /v1/bff/mvp/sessions/{jamId}/playback/commands
+    G->>B: POST /v1/bff/mvp/sessions/{jamId}/playback/commands (X-Auth-* headers)
+    B->>P: POST /v1/jam/sessions/{jamId}/playback/commands
+    P-->>B: 202 accepted or error
+    B-->>G: normalized result
+    G-->>N: upstream response
     N-->>U: Envelope success/error
 
-    Note over U,N: 4) Catalog lookup flow
     U->>N: GET /api/catalog/tracks/{trackId}
-    N->>C: GET /internal/v1/catalog/tracks/{trackId}
-    C-->>N: lookup response or 404
+    N->>G: GET /v1/bff/mvp/catalog/tracks/{trackId}
+    G->>B: GET /v1/bff/mvp/catalog/tracks/{trackId}
+    B->>C: GET /internal/v1/catalog/tracks/{trackId}
+    C-->>B: lookup response or 404
+    B-->>G: normalized result
+    G-->>N: upstream response
     N-->>U: Envelope success/error
 
     Note over U,N: 5) BFF orchestration (SSR + room bootstrap) — flows through api-gateway
@@ -206,7 +216,7 @@ sequenceDiagram
     N->>G: POST /v1/bff/mvp/sessions/{jamId}/orchestration (Bearer token)
     G->>A: POST /internal/v1/auth/validate (token verification)
     A-->>G: 200 claims or 401
-    G->>B: POST /v1/bff/mvp/sessions/{jamId}/orchestration (X-Auth-* headers, no Authorization)
+    G->>B: POST /v1/bff/mvp/sessions/{jamId}/orchestration (X-Auth-* headers, Authorization preserved for compatibility)
     B->>J: GET /api/v1/jams/{jamId}/state (X-Auth-* forwarded, required)
     opt trackId present
         B->>C: GET /internal/v1/catalog/tracks/{trackId} (optional)
@@ -224,17 +234,27 @@ sequenceDiagram
     autonumber
     actor U as Browser (Jam Room)
     participant N as Next.js API Routes
+    participant G as api-gateway
+    participant B as api-service (BFF)
     participant R as rt-gateway
     participant K as Kafka
     participant J as jam-service
     participant P as playback-service
 
-    Note over U,N: 1) Bootstrap websocket URL
+    Note over U,N: 1) Realtime bootstrap config via mandatory BFF-first HTTP hop
     U->>N: GET /api/realtime/ws-config?sessionId=...&lastSeenVersion=...
+    N->>G: GET /v1/bff/mvp/realtime/ws-config?sessionId=...&lastSeenVersion=... (Authorization or auth cookies forwarded)
+    G->>B: GET /v1/bff/mvp/realtime/ws-config?sessionId=...&lastSeenVersion=...
+    B->>R: GET /internal/v1/realtime/ws-config?sessionId=...&lastSeenVersion=...
+    R-->>B: { wsUrl, sessionId, lastSeenVersion }
+    B-->>G: normalized result
+    G-->>N: upstream response
     N-->>U: { wsUrl, sessionId, lastSeenVersion }
 
-    Note over U,R: 2) Client opens websocket directly to rt-gateway
-    U->>R: WS /ws?sessionId=...&lastSeenVersion=...
+    Note over U,R: 2) Client opens websocket through gateway/BFF proxy path
+    U->>G: WS /v1/bff/mvp/realtime/ws?sessionId=...&lastSeenVersion=...
+    G->>B: WS /v1/bff/mvp/realtime/ws?sessionId=...&lastSeenVersion=...
+    B->>R: WS /ws?sessionId=...&lastSeenVersion=...
 
     par Event production
         J->>K: Publish jam.session.* and jam.queue.* events
@@ -262,31 +282,41 @@ sequenceDiagram
 | POST /api/auth/refresh | api-gateway -> auth-service | POST /v1/auth/refresh |
 | POST /api/auth/logout | api-gateway -> auth-service | POST /v1/auth/logout |
 | GET /api/auth/me | api-gateway -> auth-service | GET /v1/auth/me |
-| POST /api/auth/validate | auth-service | POST /internal/v1/auth/validate |
-| POST /api/jam/create | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/create |
-| POST /api/jam/{jamId}/join | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/join |
-| POST /api/jam/{jamId}/leave | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/leave |
-| POST /api/jam/{jamId}/end | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/end |
-| GET /api/jam/{jamId}/state | jam-service | GET /api/v1/jams/{jamId}/state |
-| GET /api/jam/{jamId}/queue/snapshot | jam-service | GET /api/v1/jams/{jamId}/queue/snapshot |
-| POST /api/jam/{jamId}/queue/add | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/queue/add |
-| POST /api/jam/{jamId}/queue/remove | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/queue/remove |
-| POST /api/jam/{jamId}/queue/reorder | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/queue/reorder |
-| POST /api/jam/{jamId}/moderation/mute | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/moderation/mute |
-| POST /api/jam/{jamId}/moderation/kick | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/moderation/kick |
-| POST /api/jam/{jamId}/playback/commands | auth-service -> playback-service | POST /internal/v1/auth/validate, POST /v1/jam/sessions/{jamId}/playback/commands |
-| GET /api/catalog/tracks/{trackId} | catalog-service | GET /internal/v1/catalog/tracks/{trackId} |
+| POST /api/auth/validate | api-gateway -> auth-service | POST /internal/v1/auth/validate |
+| POST /api/jam/create | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/create |
+| POST /api/jam/{jamId}/join | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/join |
+| POST /api/jam/{jamId}/leave | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/leave |
+| POST /api/jam/{jamId}/end | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/end |
+| GET /api/jam/{jamId}/state | api-gateway -> api-service (BFF) -> jam-service | GET /api/v1/jams/{jamId}/state |
+| GET /api/jam/{jamId}/queue/snapshot | api-gateway -> api-service (BFF) -> jam-service | GET /api/v1/jams/{jamId}/queue/snapshot |
+| POST /api/jam/{jamId}/queue/add | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/queue/add |
+| POST /api/jam/{jamId}/queue/remove | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/queue/remove |
+| POST /api/jam/{jamId}/queue/reorder | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/queue/reorder |
+| POST /api/jam/{jamId}/moderation/mute | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/moderation/mute |
+| POST /api/jam/{jamId}/moderation/kick | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/moderation/kick |
+| POST /api/jam/{jamId}/playback/commands | api-gateway -> api-service (BFF) -> playback-service | POST /v1/jam/sessions/{jamId}/playback/commands |
+| GET /api/catalog/tracks/{trackId} | api-gateway -> api-service (BFF) -> catalog-service | GET /internal/v1/catalog/tracks/{trackId} |
 | POST /api/bff/jam/{jamId}/orchestration | api-gateway -> api-service (BFF) | POST /v1/bff/mvp/sessions/{jamId}/orchestration |
-| GET /api/realtime/ws-config | none (frontend-local config) | returns rt-gateway ws URL |
+| GET /api/realtime/ws-config | api-gateway -> api-service (BFF) | GET /v1/bff/mvp/realtime/ws-config |
+| Browser websocket connect | api-gateway -> api-service (BFF) -> rt-gateway | WS /v1/bff/mvp/realtime/ws -> /ws |
 
 ## Notes
 
 - Frontend route handlers normalize backend errors into a common envelope.
 - Frontend auth routes issue `auth_token` and `refresh_token` as HttpOnly cookies and enforce CSRF header matching for refresh/logout.
-- auth-service token validation is the shared gate for protected mutations.
-- **api-gateway is the sole public ingress**. It validates Bearer tokens via `POST /internal/v1/auth/validate` on auth-service, then injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` headers and strips `Authorization` before forwarding to api-service.
+- auth-service token validation remains the shared gate for protected mutations through api-gateway validation middleware.
+- **api-gateway is the sole public ingress**. It validates Bearer tokens via `POST /internal/v1/auth/validate` on auth-service, preferring `Authorization` and falling back to `auth_token`/`token` cookies when header auth is absent, then injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` headers before forwarding to api-service.
 - api-service reads identity from `X-Auth-*` headers only. It does not call auth-service. Requests without `X-Auth-UserId` are rejected with `401 unauthorized`.
-- api-service forwards `X-Auth-*` headers to jam-service and playback-service (not the raw `Authorization` header).
+- Non-auth frontend microservice HTTP calls are routed via api-service (BFF) before downstream delegation.
+- Frontend websocket connect path is routed through `api-gateway -> api-service (BFF)` via `WS /v1/bff/mvp/realtime/ws`; direct browser websocket calls to rt-gateway `/ws` are non-compliant.
+- During migration compatibility, api-gateway preserves `Authorization` (including cookie-derived bearer fallback) while also injecting `X-Auth-*` headers.
 - api-service BFF treats jam as a required dependency; catalog can degrade and still return partial orchestration data.
 - Orchestration is side-effect free. Playback mutations are accepted only on `POST /api/jam/{jamId}/playback/commands`; sending `playbackCommand` to orchestration returns `400 invalid_input`.
 - rt-gateway fanout uses Kafka events and can recover client gaps by fetching jam-service state snapshots.
+
+## Operational API Docs Endpoints
+
+- api-gateway Swagger UI: `GET /swagger`
+- api-gateway OpenAPI JSON: `GET /swagger/openapi.json`
+- api-service Swagger UI: `GET /swagger`
+- api-service OpenAPI JSON: `GET /swagger/openapi.json`

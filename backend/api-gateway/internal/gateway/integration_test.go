@@ -72,8 +72,52 @@ func TestIntegration_ValidToken_ProxiesToAPIService(t *testing.T) {
 	if receivedUserID != "user_1" {
 		t.Fatalf("X-Auth-UserId not forwarded: got %q", receivedUserID)
 	}
-	if receivedAuthHeader != "" {
-		t.Fatalf("Authorization header should be stripped: got %q", receivedAuthHeader)
+	if receivedAuthHeader != "Bearer valid-token" {
+		t.Fatalf("Authorization header should be preserved for downstream compatibility: got %q", receivedAuthHeader)
+	}
+}
+
+func TestIntegration_CookieFallback_ProxiesToAPIService(t *testing.T) {
+	t.Parallel()
+
+	authCalled := false
+	authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/internal/v1/auth/validate" {
+			authCalled = true
+			if r.Header.Get("Authorization") != "Bearer cookie-token" {
+				t.Fatalf("validate should use token resolved from cookie: got %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{"userId":"user_cookie","plan":"premium","sessionState":"valid"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	apiCalled := false
+	var receivedAuthHeader string
+	router, _, _ := buildTestRouter(t, authHandler, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiCalled = true
+		receivedAuthHeader = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/bff/mvp/realtime/ws-config?sessionId=jam_1", nil)
+	req.Header.Set("Cookie", "auth_token=cookie-token")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusOK)
+	}
+	if !authCalled {
+		t.Fatal("expected auth-service validate to be called")
+	}
+	if !apiCalled {
+		t.Fatal("expected api-service to be called")
+	}
+	if receivedAuthHeader != "Bearer cookie-token" {
+		t.Fatalf("api-service should receive Authorization derived from cookie fallback: got %q", receivedAuthHeader)
 	}
 }
 
@@ -171,6 +215,70 @@ func TestIntegration_PublicAuthRoute_BypassesValidation(t *testing.T) {
 	}
 	if !loginCalled {
 		t.Fatal("login endpoint on auth-service must be called")
+	}
+}
+
+func TestIntegration_SwaggerUIRoute_IsPublicAndServed(t *testing.T) {
+	t.Parallel()
+
+	router, _, _ := buildTestRouter(
+		t,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/swagger", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusOK)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct == "" {
+		t.Fatal("swagger route must set content-type")
+	}
+}
+
+func TestIntegration_OpenAPIJSONRoute_IsPublicAndServed(t *testing.T) {
+	t.Parallel()
+
+	router, _, _ := buildTestRouter(
+		t,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }),
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/swagger/openapi.json", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusOK)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode openapi response: %v", err)
+	}
+	if payload["openapi"] == nil {
+		t.Fatal("openapi document must include openapi version field")
+	}
+	paths, ok := payload["paths"].(map[string]any)
+	if !ok {
+		t.Fatal("openapi paths must be present")
+	}
+	required := []string{
+		"/healthz",
+		"/v1/auth/login",
+		"/v1/bff/mvp/realtime/ws-config",
+		"/v1/bff/mvp/realtime/ws",
+		"/v1/bff/mvp/sessions/{sessionId}/orchestration",
+	}
+	for _, route := range required {
+		if _, exists := paths[route]; !exists {
+			t.Fatalf("expected gateway openapi to include route %q", route)
+		}
 	}
 }
 

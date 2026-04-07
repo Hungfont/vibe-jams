@@ -28,7 +28,7 @@ export async function POST(
   }
 
   const result = await backendJson<SessionSnapshot>({
-    service: "jam",
+    service: "gateway",
     path: `/api/v1/jams/${encodeURIComponent(jamId)}/join`,
     method: "POST",
     authHeader: auth.authHeader,

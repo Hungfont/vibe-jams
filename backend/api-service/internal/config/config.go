@@ -17,6 +17,8 @@ const (
 	defaultJamServiceURL      = "http://localhost:8080"
 	defaultPlaybackServiceURL = "http://localhost:8082"
 	defaultCatalogServiceURL  = "http://localhost:8083"
+	defaultRTGatewayURL       = "http://localhost:8086"
+	defaultGatewayPublicURL   = "http://localhost:8085"
 	defaultJamTimeoutMS       = 1200
 	defaultPlaybackTimeoutMS  = 1000
 	defaultCatalogTimeoutMS   = 800
@@ -33,6 +35,8 @@ type Config struct {
 	JamServiceURL      string
 	PlaybackServiceURL string
 	CatalogServiceURL  string
+	RTGatewayURL       string
+	GatewayPublicURL   string
 	JamTimeout         time.Duration
 	PlaybackTimeout    time.Duration
 	CatalogTimeout     time.Duration
@@ -83,6 +87,8 @@ func Load() (Config, error) {
 		JamServiceURL:      stringFromEnv("JAM_SERVICE_URL", defaultJamServiceURL),
 		PlaybackServiceURL: stringFromEnv("PLAYBACK_SERVICE_URL", defaultPlaybackServiceURL),
 		CatalogServiceURL:  stringFromEnv("CATALOG_SERVICE_URL", defaultCatalogServiceURL),
+		RTGatewayURL:       stringFromEnv("RT_GATEWAY_URL", defaultRTGatewayURL),
+		GatewayPublicURL:   stringFromEnv("GATEWAY_PUBLIC_URL", defaultGatewayPublicURL),
 		JamTimeout:         time.Duration(jamTimeoutMS) * time.Millisecond,
 		PlaybackTimeout:    time.Duration(playbackTimeoutMS) * time.Millisecond,
 		CatalogTimeout:     time.Duration(catalogTimeoutMS) * time.Millisecond,
@@ -103,7 +109,7 @@ func (c Config) Validate() error {
 	if c.JamTimeout <= 0 || c.PlaybackTimeout <= 0 || c.CatalogTimeout <= 0 {
 		return fmt.Errorf("all BFF dependency timeouts must be positive")
 	}
-	if c.JamServiceURL == "" || c.PlaybackServiceURL == "" || c.CatalogServiceURL == "" {
+	if c.JamServiceURL == "" || c.PlaybackServiceURL == "" || c.CatalogServiceURL == "" || c.RTGatewayURL == "" || c.GatewayPublicURL == "" {
 		return fmt.Errorf("all dependency URLs must be configured")
 	}
 	return nil

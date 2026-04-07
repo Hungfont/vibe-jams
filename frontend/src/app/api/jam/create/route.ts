@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await backendJson<SessionSnapshot>({
-    service: "jam",
+    service: "gateway",
     path: "/api/v1/jams/create",
     method: "POST",
     authHeader: auth.authHeader,
@@ -35,3 +35,4 @@ export async function POST(request: NextRequest) {
 
   return jsonSuccess(result.data, 201);
 }
+

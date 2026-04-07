@@ -13,7 +13,7 @@ export async function GET(
   const cookieHeader = request.headers.get("cookie") ?? undefined;
 
   const result = await backendJson<SessionStateSnapshot>({
-    service: "jam",
+    service: "gateway",
     path: `/api/v1/jams/${encodeURIComponent(jamId)}/state`,
     method: "GET",
     authHeader,

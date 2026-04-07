@@ -10,7 +10,7 @@ export async function GET(
 ) {
   const { jamId } = await context.params;
   const result = await backendJson<QueueSnapshot>({
-    service: "jam",
+    service: "gateway",
     path: `/api/v1/jams/${encodeURIComponent(jamId)}/queue/snapshot`,
     method: "GET",
     authHeader: request.headers.get("authorization") ?? undefined,
