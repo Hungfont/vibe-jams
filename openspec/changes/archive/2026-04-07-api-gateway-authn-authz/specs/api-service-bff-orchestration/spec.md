@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: API-service MUST expose MVP BFF orchestration entrypoint
-The API-service SHALL expose a BFF orchestration entrypoint for MVP web flows that coordinates auth identity, jam, and optional catalog dependencies behind a single client-facing API surface. Auth identity MUST be sourced from gateway-forwarded `X-Auth-*` headers (`X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope`) injected by api-gateway. The API-service MUST NOT call `POST /internal/v1/auth/validate` directly for incoming client requests.
+The API-service SHALL expose a BFF orchestration entrypoint for MVP web flows that coordinates auth identity, jam, and optional catalog dependencies behind a single client-facing API surface. Auth identity MUST be sourced from gateway-forwarded `X-Auth-*` headers (`X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope`) injected by api-gateway. The API-service MUST NOT call `POST /internal/v1/auth/validate` directly for incoming client requests. The API-service SHALL forward the gateway-injected `X-Auth-*` headers to downstream services (jam-service, playback-service), and the raw `Authorization` header MUST NOT be forwarded.
 
 #### Scenario: BFF entrypoint handles MVP web request with gateway-forwarded identity
 - **WHEN** a web client sends a valid orchestration request through api-gateway and api-gateway has injected `X-Auth-*` headers
@@ -15,16 +15,9 @@ The API-service SHALL expose a BFF orchestration entrypoint for MVP web flows th
 - **WHEN** an orchestration request arrives with `X-Auth-SessionState` value that is not `valid`
 - **THEN** api-service returns `401` with deterministic error code `unauthorized`
 
-### Requirement: BFF orchestration MUST forward X-Auth identity headers to downstream services
-The API-service SHALL forward the gateway-injected `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` headers to downstream services (jam-service, playback-service). The raw `Authorization` header MUST NOT be forwarded.
-
-#### Scenario: X-Auth headers forwarded to jam-service
-- **WHEN** api-service makes a request to jam-service as part of orchestration
-- **THEN** the request to jam-service includes `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` headers
-
-#### Scenario: Authorization header not forwarded downstream
-- **WHEN** api-service makes a request to any downstream service (jam-service, playback-service)
-- **THEN** the downstream request MUST NOT contain an `Authorization` header
+#### Scenario: X-Auth headers forwarded to downstream dependencies
+- **WHEN** api-service makes a downstream request as part of orchestration
+- **THEN** downstream requests include gateway-injected `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` headers and MUST NOT include an `Authorization` header
 
 ### Requirement: BFF orchestration MUST be side-effect free
 The orchestration endpoint MUST execute read aggregation only and MUST NOT trigger playback mutation.
