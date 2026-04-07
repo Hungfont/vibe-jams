@@ -16,6 +16,7 @@ type persistedSessionState struct {
 	HostUserID       string `json:"hostUserId"`
 	Status           string `json:"status"`
 	QueueVersion     int64  `json:"queueVersion"`
+	PlaybackEpoch    int64  `json:"playbackEpoch"`
 	AggregateVersion int64  `json:"aggregateVersion"`
 	PlaybackState    string `json:"playbackState"`
 	PositionMS       int64  `json:"positionMs"`
@@ -45,6 +46,7 @@ func (r *RedisPlaybackRepository) loadDurableStateLocked() error {
 			hostUserID:       state.HostUserID,
 			status:           state.Status,
 			queueVersion:     state.QueueVersion,
+			playbackEpoch:    state.PlaybackEpoch,
 			aggregateVersion: state.AggregateVersion,
 			playbackState:    state.PlaybackState,
 			positionMS:       state.PositionMS,
@@ -67,6 +69,7 @@ func (r *RedisPlaybackRepository) saveDurableStateLocked() error {
 			HostUserID:       state.hostUserID,
 			Status:           state.status,
 			QueueVersion:     state.queueVersion,
+			PlaybackEpoch:    state.playbackEpoch,
 			AggregateVersion: state.aggregateVersion,
 			PlaybackState:    state.playbackState,
 			PositionMS:       state.positionMS,

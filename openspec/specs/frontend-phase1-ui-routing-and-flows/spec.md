@@ -48,11 +48,11 @@ The jam room page SHALL use orchestration for first load and SHALL keep required
 - **THEN** the room renders required core sections and shows actionable degraded notices for affected optional segments
 
 ### Requirement: Queue UI SHALL enforce version-aware mutation and deterministic conflict recovery
-Queue add, remove, and reorder interactions SHALL execute through frontend routes, SHALL honor queue version behavior, and SHALL provide conflict recovery with snapshot refresh path.
+Queue add, remove, and reorder interactions SHALL execute through frontend routes, SHALL honor queue version behavior, and SHALL provide conflict recovery with snapshot refresh path. Conflict handling SHALL consume shared retry guidance payload from `409 version_conflict` responses.
 
 #### Scenario: Queue reorder conflict
 - **WHEN** reorder response indicates `version_conflict`
-- **THEN** the UI refetches authoritative snapshot and offers retry without corrupting local projection
+- **THEN** the UI reads retry guidance metadata, refetches authoritative snapshot, and offers retry without corrupting local projection
 
 #### Scenario: Track validation error
 - **WHEN** add flow encounters `track_not_found` or `track_unavailable`
@@ -68,6 +68,10 @@ Playback controls SHALL only permit host command execution and SHALL map unautho
 #### Scenario: Non-host command attempt
 - **WHEN** non-host user attempts playback command
 - **THEN** command is blocked with host-only reason and no state transition is applied
+
+#### Scenario: Playback version conflict with retry guidance
+- **WHEN** playback command response indicates `version_conflict`
+- **THEN** the UI uses retry guidance fields including queueVersion and playbackEpoch to reconcile local state before enabling retry
 
 ### Requirement: Realtime synchronization SHALL apply monotonic event updates and snapshot fallback recovery
 Jam room realtime state SHALL process only monotonic aggregateVersion updates, SHALL ignore stale or duplicate events, and SHALL recover via snapshot when gaps or stale reconnect cursors are detected. Realtime bootstrap configuration MUST be fetched through BFF-first HTTP flow.

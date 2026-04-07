@@ -438,9 +438,10 @@ const openAPISpec = `{
       "RemoveQueueItemRequest": {
         "type": "object",
         "properties": {
-          "itemId": { "type": "string" }
+          "itemId": { "type": "string" },
+          "expectedQueueVersion": { "type": "integer", "format": "int64" }
         },
-        "required": ["itemId"]
+        "required": ["itemId", "expectedQueueVersion"]
       },
       "ReorderQueueRequest": {
         "type": "object",
@@ -457,7 +458,15 @@ const openAPISpec = `{
         "type": "object",
         "properties": {
           "code": { "type": "string" },
-          "message": { "type": "string" }
+          "message": { "type": "string" },
+          "retry": {
+            "type": "object",
+            "properties": {
+              "currentQueueVersion": { "type": "integer", "format": "int64" },
+              "playbackEpoch": { "type": "integer", "format": "int64" }
+            },
+            "required": ["currentQueueVersion"]
+          }
         },
         "required": ["code", "message"]
       },

@@ -180,6 +180,17 @@ describe("JamRoomClient", () => {
       expect(mocks.fetchJamState).toHaveBeenCalledTimes(1);
       expect(mocks.reorderQueue).toHaveBeenCalledTimes(2);
     });
+
+    expect(mocks.reorderQueue).toHaveBeenNthCalledWith(
+      1,
+      "jam-1",
+      expect.objectContaining({ expectedQueueVersion: 2 }),
+    );
+    expect(mocks.reorderQueue).toHaveBeenNthCalledWith(
+      2,
+      "jam-1",
+      expect.objectContaining({ expectedQueueVersion: 3 }),
+    );
   });
 
   it("blocks playback interactions for non-host users", async () => {

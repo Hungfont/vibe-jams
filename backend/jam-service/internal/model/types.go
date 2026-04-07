@@ -68,8 +68,9 @@ type AddQueueItemRequest struct {
 
 // RemoveQueueItemRequest defines request payload for queue-remove endpoint.
 type RemoveQueueItemRequest struct {
-	ItemID      string `json:"itemId"`
-	ActorUserID string `json:"actorUserId,omitempty"`
+	ItemID               string `json:"itemId"`
+	ExpectedQueueVersion int64  `json:"expectedQueueVersion"`
+	ActorUserID          string `json:"actorUserId,omitempty"`
 }
 
 // ReorderQueueRequest defines request payload for queue-reorder endpoint.

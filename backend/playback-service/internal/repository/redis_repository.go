@@ -22,6 +22,7 @@ type sessionState struct {
 	hostUserID       string
 	status           string
 	queueVersion     int64
+	playbackEpoch    int64
 	aggregateVersion int64
 	playbackState    string
 	positionMS       int64
@@ -140,6 +141,18 @@ func (r *RedisPlaybackRepository) QueueVersion(sessionID string) (int64, error) 
 	return current.queueVersion, nil
 }
 
+// PlaybackEpoch returns current playback epoch for one session.
+func (r *RedisPlaybackRepository) PlaybackEpoch(sessionID string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	current, ok := r.sessions[sessionID]
+	if !ok {
+		return 0, ErrSessionNotFound
+	}
+	return current.playbackEpoch, nil
+}
+
 // SessionStatus returns current lifecycle status for one session.
 func (r *RedisPlaybackRepository) SessionStatus(sessionID string) (string, error) {
 	r.mu.Lock()
@@ -180,6 +193,7 @@ func (r *RedisPlaybackRepository) ApplyCommand(sessionID string, command string,
 	}
 
 	current.aggregateVersion++
+	current.playbackEpoch++
 	if err := r.saveDurableStateLocked(); err != nil {
 		return model.PlaybackTransition{}, err
 	}
@@ -190,6 +204,7 @@ func (r *RedisPlaybackRepository) ApplyCommand(sessionID string, command string,
 		State:            current.playbackState,
 		PositionMS:       current.positionMS,
 		QueueVersion:     current.queueVersion,
+		PlaybackEpoch:    current.playbackEpoch,
 		AggregateVersion: current.aggregateVersion,
 		ActorUserID:      actorUserID,
 		ClientEventID:    clientEventID,

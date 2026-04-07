@@ -1,7 +1,13 @@
+export interface ConflictRetryGuidance {
+  currentQueueVersion: number;
+  playbackEpoch?: number;
+}
+
 export interface ApiErrorBody {
   code: string;
   message: string;
   dependency?: string;
+  retry?: ConflictRetryGuidance;
   fieldErrors?: Array<{ field: string; message: string }>;
 }
 
@@ -20,13 +26,19 @@ export function successEnvelope<T>(data: T): ApiEnvelope<T> {
   return { success: true, data };
 }
 
-export function errorEnvelope(code: string, message: string, dependency?: string): ApiEnvelope<never> {
+export function errorEnvelope(
+  code: string,
+  message: string,
+  dependency?: string,
+  retry?: ConflictRetryGuidance,
+): ApiEnvelope<never> {
   return {
     success: false,
     error: {
       code,
       message,
       dependency,
+      retry,
     },
   };
 }

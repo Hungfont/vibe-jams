@@ -28,7 +28,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToastStack } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/use-toast";
-import type { ApiEnvelope } from "@/lib/api/types";
+import type { ApiEnvelope, ConflictRetryGuidance } from "@/lib/api/types";
 import { addQueueItem, kickParticipant, muteParticipant, removeQueueItem, reorderQueue } from "@/lib/jam/actions";
 import { endJamSession, executePlayback, fetchJamState, fetchOrchestration, fetchRealtimeWsConfig } from "@/lib/jam/client";
 import { BLOCKING_CODES, type RoomTab } from "@/lib/jam/constants";
@@ -70,6 +70,31 @@ function mergeQueue(room: BffOrchestrationData, snapshot: QueueSnapshot): BffOrc
   };
 }
 
+function applyConflictRetryGuidance(room: BffOrchestrationData, retry?: ConflictRetryGuidance): BffOrchestrationData {
+  if (!retry) {
+    return room;
+  }
+
+  const queueVersion = Math.max(room.sessionState.queue.queueVersion, retry.currentQueueVersion);
+  const aggregateVersion = Math.max(
+    room.sessionState.aggregateVersion,
+    queueVersion,
+    retry.playbackEpoch ?? room.sessionState.aggregateVersion,
+  );
+
+  return {
+    ...room,
+    sessionState: {
+      ...room.sessionState,
+      queue: {
+        ...room.sessionState.queue,
+        queueVersion,
+      },
+      aggregateVersion,
+    },
+  };
+}
+
 export function JamRoomClient({ jamId, initialView, initialData, initialError }: JamRoomClientProps) {
   const { items, toast } = useToast();
   const [trackId, setTrackId] = React.useState("");
@@ -88,6 +113,12 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
   });
 
   const room = swr.data;
+  const roomRef = React.useRef<BffOrchestrationData | null>(room ?? initialData ?? null);
+
+  React.useEffect(() => {
+    roomRef.current = room ?? null;
+  }, [room]);
+
   const hasRequiredRoomState = Boolean(room?.sessionState?.session && room?.sessionState?.queue);
   const isEnded = room?.sessionState?.session?.status === "ended";
   const isHost = Boolean(room?.claims?.userId && room?.sessionState?.session?.hostUserId && room.claims.userId === room.sessionState.session.hostUserId);
@@ -112,18 +143,58 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
     setPendingPlayback(null);
   }, [jamId, swr]);
 
+  const reconcileConflict = React.useCallback(
+    (retry?: ConflictRetryGuidance) => {
+      if (!retry) {
+        return;
+      }
+
+      swr.mutate((current) => {
+        if (!current) {
+          return current;
+        }
+        return applyConflictRetryGuidance(current, retry);
+      }, false);
+    },
+    [swr],
+  );
+
   const runQueueMutation = React.useCallback(
-    async (mutation: () => Promise<ApiEnvelope<QueueSnapshot>>): Promise<ApiEnvelope<QueueSnapshot>> => {
-      let response = await mutation();
+    async (
+      mutation: (current: BffOrchestrationData) => Promise<ApiEnvelope<QueueSnapshot>>,
+    ): Promise<ApiEnvelope<QueueSnapshot>> => {
+      const firstState = roomRef.current;
+      if (!firstState) {
+        return {
+          success: false,
+          error: {
+            code: "internal_error",
+            message: "room state unavailable",
+          },
+        };
+      }
+
+      let response = await mutation(firstState);
       if (response.success || response.error?.code !== "version_conflict") {
         return response;
       }
 
+      reconcileConflict(response.error.retry);
       await refreshSnapshot();
-      response = await mutation();
+
+      const secondState = roomRef.current;
+      if (!secondState) {
+        return response;
+      }
+
+      response = await mutation(secondState);
+      if (!response.success && response.error?.code === "version_conflict") {
+        reconcileConflict(response.error.retry);
+      }
+
       return response;
     },
-    [refreshSnapshot],
+    [reconcileConflict, refreshSnapshot],
   );
 
   React.useEffect(() => {
@@ -216,7 +287,12 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
 
   const handleRemove = React.useCallback(
     async (itemId: string) => {
-      const response = await runQueueMutation(() => removeQueueItem(jamId, { itemId }));
+      const response = await runQueueMutation((current) =>
+        removeQueueItem(jamId, {
+          itemId,
+          expectedQueueVersion: current.sessionState.queue.queueVersion,
+        }),
+      );
       if (!response.success || !response.data) {
         setLocalError(response.error?.message ?? "Unable to remove item");
         toast({ title: "Remove failed", description: response.error?.message, variant: "error" });
@@ -232,12 +308,13 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
       return;
     }
 
-    const reversed = [...room.sessionState.queue.items].map((item) => item.itemId).reverse();
-    const payload = {
-      itemIds: reversed,
-      expectedQueueVersion: room.sessionState.queue.queueVersion,
-    };
-    const response = await runQueueMutation(() => reorderQueue(jamId, payload));
+    const response = await runQueueMutation((current) => {
+      const reversed = [...current.sessionState.queue.items].map((item) => item.itemId).reverse();
+      return reorderQueue(jamId, {
+        itemIds: reversed,
+        expectedQueueVersion: current.sessionState.queue.queueVersion,
+      });
+    });
 
     if (!response.success || !response.data) {
       setLocalError(response.error?.message ?? "Unable to reorder queue");
@@ -266,15 +343,21 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
         toast({ title: "Playback rejected", description: response.error?.message, variant: "error" });
         setPendingPlayback(null);
         if (response.error?.code === "version_conflict") {
+          reconcileConflict(response.error.retry);
           await refreshSnapshot();
         }
         return;
       }
 
+      reconcileConflict({
+        currentQueueVersion: response.data?.queueVersion ?? room.sessionState.queue.queueVersion,
+        playbackEpoch: response.data?.playbackEpoch,
+      });
+
       setPendingPlayback(command);
       toast({ title: "Playback accepted", description: `Command ${command} queued` });
     },
-    [isEnded, isHost, jamId, pendingPlayback, positionMs, refreshSnapshot, room, toast],
+    [isEnded, isHost, jamId, pendingPlayback, positionMs, reconcileConflict, refreshSnapshot, room, toast],
   );
 
   React.useEffect(() => {

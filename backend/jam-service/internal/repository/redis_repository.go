@@ -31,6 +31,31 @@ var (
 	ErrModerationTargetInvalid = errors.New("invalid moderation target")
 )
 
+// VersionConflictError captures stale optimistic concurrency metadata.
+type VersionConflictError struct {
+	ExpectedQueueVersion int64
+	CurrentQueueVersion  int64
+}
+
+func (e *VersionConflictError) Error() string {
+	return fmt.Sprintf("queue version conflict: expected %d current %d", e.ExpectedQueueVersion, e.CurrentQueueVersion)
+}
+
+// Is allows errors.Is(err, ErrVersionConflict) checks.
+func (e *VersionConflictError) Is(target error) bool {
+	return target == ErrVersionConflict
+}
+
+// VersionConflictCurrentQueueVersion extracts authoritative queue version from conflict error.
+func VersionConflictCurrentQueueVersion(err error) (int64, bool) {
+	var conflictErr *VersionConflictError
+	if !errors.As(err, &conflictErr) {
+		return 0, false
+	}
+
+	return conflictErr.CurrentQueueVersion, true
+}
+
 type addResult struct {
 	snapshot model.QueueSnapshot
 }
@@ -361,7 +386,7 @@ func (r *RedisQueueRepository) Add(jamID string, req model.AddQueueItemRequest) 
 }
 
 // Remove atomically deletes an item by ID and increments queue version by one.
-func (r *RedisQueueRepository) Remove(jamID string, itemID string, actorUserID string) (model.QueueSnapshot, error) {
+func (r *RedisQueueRepository) Remove(jamID string, expectedVersion int64, itemID string, actorUserID string) (model.QueueSnapshot, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -374,6 +399,12 @@ func (r *RedisQueueRepository) Remove(jamID string, itemID string, actorUserID s
 	}
 	if err := ensureActorCanMutate(state, actorUserID); err != nil {
 		return model.QueueSnapshot{}, err
+	}
+	if expectedVersion != state.queueVersion {
+		return model.QueueSnapshot{}, &VersionConflictError{
+			ExpectedQueueVersion: expectedVersion,
+			CurrentQueueVersion:  state.queueVersion,
+		}
 	}
 	index := slices.IndexFunc(state.items, func(item model.QueueItem) bool {
 		return item.ItemID == itemID
@@ -411,7 +442,10 @@ func (r *RedisQueueRepository) Reorder(jamID string, expectedVersion int64, item
 		return model.QueueSnapshot{}, err
 	}
 	if expectedVersion != state.queueVersion {
-		return model.QueueSnapshot{}, ErrVersionConflict
+		return model.QueueSnapshot{}, &VersionConflictError{
+			ExpectedQueueVersion: expectedVersion,
+			CurrentQueueVersion:  state.queueVersion,
+		}
 	}
 
 	if len(itemIDs) != len(state.items) {

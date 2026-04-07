@@ -69,6 +69,25 @@ func TestPlaybackCommand_AcceptedPublishesKafkaEvent(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusAccepted)
 	}
+
+	var accepted struct {
+		Accepted      bool  `json:"accepted"`
+		QueueVersion  int64 `json:"queueVersion"`
+		PlaybackEpoch int64 `json:"playbackEpoch"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&accepted); err != nil {
+		t.Fatalf("decode accepted response: %v", err)
+	}
+	if !accepted.Accepted {
+		t.Fatal("expected accepted=true")
+	}
+	if accepted.QueueVersion != 7 {
+		t.Fatalf("queueVersion mismatch: got %d want 7", accepted.QueueVersion)
+	}
+	if accepted.PlaybackEpoch != 1 {
+		t.Fatalf("playbackEpoch mismatch: got %d want 1", accepted.PlaybackEpoch)
+	}
+
 	if len(pub.Records) != 1 {
 		t.Fatalf("expected one published record, got %d", len(pub.Records))
 	}
@@ -88,6 +107,20 @@ func TestPlaybackCommand_AcceptedPublishesKafkaEvent(t *testing.T) {
 	}
 	if envelope.AggregateVersion != 1 {
 		t.Fatalf("aggregateVersion mismatch: got %d want 1", envelope.AggregateVersion)
+	}
+
+	var payload struct {
+		QueueVersion  int64 `json:"queueVersion"`
+		PlaybackEpoch int64 `json:"playbackEpoch"`
+	}
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal event payload: %v", err)
+	}
+	if payload.QueueVersion != 7 {
+		t.Fatalf("event queueVersion mismatch: got %d want 7", payload.QueueVersion)
+	}
+	if payload.PlaybackEpoch != 1 {
+		t.Fatalf("event playbackEpoch mismatch: got %d want 1", payload.PlaybackEpoch)
 	}
 }
 
@@ -189,7 +222,11 @@ func TestPlaybackCommand_StaleVersionRejectedAndNoPublish(t *testing.T) {
 
 	var errorBody struct {
 		Error struct {
-			Code string `json:"code"`
+			Code  string `json:"code"`
+			Retry struct {
+				CurrentQueueVersion int64 `json:"currentQueueVersion"`
+				PlaybackEpoch       int64 `json:"playbackEpoch"`
+			} `json:"retry"`
 		} `json:"error"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&errorBody); err != nil {
@@ -197,6 +234,12 @@ func TestPlaybackCommand_StaleVersionRejectedAndNoPublish(t *testing.T) {
 	}
 	if errorBody.Error.Code != "version_conflict" {
 		t.Fatalf("error code mismatch: got %q want version_conflict", errorBody.Error.Code)
+	}
+	if errorBody.Error.Retry.CurrentQueueVersion != 7 {
+		t.Fatalf("retry currentQueueVersion mismatch: got %d want 7", errorBody.Error.Retry.CurrentQueueVersion)
+	}
+	if errorBody.Error.Retry.PlaybackEpoch != 0 {
+		t.Fatalf("retry playbackEpoch mismatch: got %d want 0", errorBody.Error.Retry.PlaybackEpoch)
 	}
 }
 

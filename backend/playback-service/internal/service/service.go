@@ -31,7 +31,36 @@ type StateRepository interface {
 	SessionStatus(sessionID string) (string, error)
 	HostUserID(sessionID string) (string, error)
 	QueueVersion(sessionID string) (int64, error)
+	PlaybackEpoch(sessionID string) (int64, error)
 	ApplyCommand(sessionID string, command string, positionMS int64, actorUserID string, clientEventID string) (model.PlaybackTransition, error)
+}
+
+// ConflictRetryGuidance contains authoritative metadata for stale command recovery.
+type ConflictRetryGuidance struct {
+	CurrentQueueVersion int64
+	PlaybackEpoch       int64
+}
+
+type versionConflictError struct {
+	guidance ConflictRetryGuidance
+}
+
+func (e *versionConflictError) Error() string {
+	return "stale queue version"
+}
+
+func (e *versionConflictError) Is(target error) bool {
+	return target == ErrVersionConflict
+}
+
+// ConflictRetryFromError extracts retry guidance when a version conflict occurs.
+func ConflictRetryFromError(err error) (ConflictRetryGuidance, bool) {
+	var conflictErr *versionConflictError
+	if !errors.As(err, &conflictErr) {
+		return ConflictRetryGuidance{}, false
+	}
+
+	return conflictErr.guidance, true
 }
 
 // EventProducer publishes playback transition events.
@@ -96,8 +125,17 @@ func (s *Service) ExecuteCommand(ctx context.Context, sessionID string, actorUse
 	if err != nil {
 		return model.CommandAcceptedResponse{}, err
 	}
+	playbackEpoch, err := s.repo.PlaybackEpoch(sessionID)
+	if err != nil {
+		return model.CommandAcceptedResponse{}, err
+	}
 	if req.ExpectedQueueVersion != queueVersion {
-		return model.CommandAcceptedResponse{}, ErrVersionConflict
+		return model.CommandAcceptedResponse{}, &versionConflictError{
+			guidance: ConflictRetryGuidance{
+				CurrentQueueVersion: queueVersion,
+				PlaybackEpoch:       playbackEpoch,
+			},
+		}
 	}
 
 	transition, err := s.repo.ApplyCommand(sessionID, normalizeCommand(req.Command), req.PositionMS, actorUserID, req.ClientEventID)
@@ -111,6 +149,7 @@ func (s *Service) ExecuteCommand(ctx context.Context, sessionID string, actorUse
 			"state":            transition.State,
 			"positionMs":       transition.PositionMS,
 			"queueVersion":     transition.QueueVersion,
+			"playbackEpoch":    transition.PlaybackEpoch,
 			"actorUserId":      transition.ActorUserID,
 			"clientEventId":    transition.ClientEventID,
 			"aggregateVersion": transition.AggregateVersion,
@@ -119,7 +158,11 @@ func (s *Service) ExecuteCommand(ctx context.Context, sessionID string, actorUse
 		}
 	}
 
-	return model.CommandAcceptedResponse{Accepted: true}, nil
+	return model.CommandAcceptedResponse{
+		Accepted:      true,
+		QueueVersion:  transition.QueueVersion,
+		PlaybackEpoch: transition.PlaybackEpoch,
+	}, nil
 }
 
 func (s *Service) validateTrack(ctx context.Context, trackID string) error {

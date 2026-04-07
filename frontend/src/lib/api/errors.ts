@@ -15,20 +15,36 @@ export function extractErrorBody(payload: unknown): Partial<ApiErrorBody> {
 
   const nestedError = asRecord(root.error);
   if (nestedError) {
+    const retry = asRecord(nestedError.retry);
     return {
       code: typeof nestedError.code === "string" ? nestedError.code : undefined,
       message: typeof nestedError.message === "string" ? nestedError.message : undefined,
       dependency: typeof nestedError.dependency === "string" ? nestedError.dependency : undefined,
+      retry:
+        retry && typeof retry.currentQueueVersion === "number"
+          ? {
+              currentQueueVersion: retry.currentQueueVersion,
+              playbackEpoch: typeof retry.playbackEpoch === "number" ? retry.playbackEpoch : undefined,
+            }
+          : undefined,
     };
   }
 
   if (root.success === false) {
     const flatError = asRecord(root.error);
     if (flatError) {
+      const retry = asRecord(flatError.retry);
       return {
         code: typeof flatError.code === "string" ? flatError.code : undefined,
         message: typeof flatError.message === "string" ? flatError.message : undefined,
         dependency: typeof flatError.dependency === "string" ? flatError.dependency : undefined,
+        retry:
+          retry && typeof retry.currentQueueVersion === "number"
+            ? {
+                currentQueueVersion: retry.currentQueueVersion,
+                playbackEpoch: typeof retry.playbackEpoch === "number" ? retry.playbackEpoch : undefined,
+              }
+            : undefined,
       };
     }
   }

@@ -42,6 +42,8 @@ export async function POST(
       result.error?.code ?? "internal_error",
       result.error?.message ?? "failed to execute playback command",
       result.status,
+      result.error?.dependency,
+      result.error?.retry,
     );
   }
 

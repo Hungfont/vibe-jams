@@ -57,6 +57,8 @@ export interface PlaybackCommandRequest {
 
 export interface PlaybackAccepted {
   accepted: boolean;
+  queueVersion: number;
+  playbackEpoch: number;
 }
 
 export interface BffIssue {

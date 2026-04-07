@@ -53,7 +53,9 @@ func (r PlaybackCommandRequest) Validate() error {
 
 // CommandAcceptedResponse is returned when command is accepted.
 type CommandAcceptedResponse struct {
-	Accepted bool `json:"accepted"`
+	Accepted      bool  `json:"accepted"`
+	QueueVersion  int64 `json:"queueVersion"`
+	PlaybackEpoch int64 `json:"playbackEpoch"`
 }
 
 // PlaybackTransition stores computed transition metadata after command execution.
@@ -63,6 +65,7 @@ type PlaybackTransition struct {
 	State            string `json:"state"`
 	PositionMS       int64  `json:"positionMs"`
 	QueueVersion     int64  `json:"queueVersion"`
+	PlaybackEpoch    int64  `json:"playbackEpoch"`
 	AggregateVersion int64  `json:"aggregateVersion"`
 	ActorUserID      string `json:"actorUserId"`
 	ClientEventID    string `json:"clientEventId"`

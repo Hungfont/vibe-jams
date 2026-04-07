@@ -101,6 +101,13 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	case service.IsHostOnly(err):
 		apierror.Write(w, http.StatusForbidden, apierror.CodeHostOnly, "host only command")
 	case service.IsVersionConflict(err):
+		if retry, ok := service.ConflictRetryFromError(err); ok {
+			apierror.WriteWithRetry(w, http.StatusConflict, apierror.CodeVersionConflict, "stale queue version", &apierror.RetryGuidance{
+				CurrentQueueVersion: retry.CurrentQueueVersion,
+				PlaybackEpoch:       retry.PlaybackEpoch,
+			})
+			return
+		}
 		apierror.Write(w, http.StatusConflict, apierror.CodeVersionConflict, "stale queue version")
 	case service.IsSessionEnded(err):
 		apierror.Write(w, http.StatusConflict, apierror.CodeSessionEnded, "session has ended")

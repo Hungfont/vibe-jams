@@ -12,6 +12,7 @@ export const queueAddSchema = z.object({
 
 export const queueRemoveSchema = z.object({
   itemId: z.string().trim().min(1, "itemId is required"),
+  expectedQueueVersion: z.number().int().positive("expectedQueueVersion must be positive"),
 });
 
 export const queueReorderSchema = z.object({

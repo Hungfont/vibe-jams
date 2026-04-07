@@ -38,7 +38,13 @@ export async function POST(
   });
 
   if (!result.ok || !result.data) {
-    return jsonError(result.error?.code ?? "internal_error", result.error?.message ?? "failed to reorder queue", result.status);
+    return jsonError(
+      result.error?.code ?? "internal_error",
+      result.error?.message ?? "failed to reorder queue",
+      result.status,
+      result.error?.dependency,
+      result.error?.retry,
+    );
   }
 
   return jsonSuccess(result.data);

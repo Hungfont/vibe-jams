@@ -157,15 +157,25 @@ const openAPISpec = `{
       "CommandAcceptedResponse": {
         "type": "object",
         "properties": {
-          "accepted": { "type": "boolean" }
+      "accepted": { "type": "boolean" },
+      "queueVersion": { "type": "integer", "format": "int64" },
+      "playbackEpoch": { "type": "integer", "format": "int64" }
         },
-        "required": ["accepted"]
+    "required": ["accepted", "queueVersion", "playbackEpoch"]
       },
       "ErrorDetail": {
         "type": "object",
         "properties": {
           "code": { "type": "string" },
-          "message": { "type": "string" }
+      "message": { "type": "string" },
+      "retry": {
+      "type": "object",
+      "properties": {
+        "currentQueueVersion": { "type": "integer", "format": "int64" },
+        "playbackEpoch": { "type": "integer", "format": "int64" }
+      },
+      "required": ["currentQueueVersion"]
+      }
         },
         "required": ["code", "message"]
       },

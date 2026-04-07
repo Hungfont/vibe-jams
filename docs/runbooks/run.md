@@ -94,6 +94,31 @@ Validation evidence:
 1. `go test ./backend/playback-service/internal/handler -run TestPlaybackCommand -count=1`
 2. `go test ./backend/playback-service/internal/kafka -count=1`
 
+### Flow 16: Stronger Concurrency Guards for Queue and Playback (ES-P2-003)
+
+Steps:
+1. Submit queue remove or reorder writes with `expectedQueueVersion` from latest known snapshot.
+2. For stale queue writes, return `409 version_conflict` with `error.retry.currentQueueVersion` guidance.
+3. Submit playback command writes with `expectedQueueVersion` and host authorization.
+4. For stale playback writes, return `409 version_conflict` with `error.retry.currentQueueVersion` and `error.retry.playbackEpoch`.
+5. On accepted playback updates, include `queueVersion` and `playbackEpoch` in command response and emitted playback event payload.
+6. Frontend reconciliation applies retry guidance, refreshes authoritative snapshot, and retries versioned queue mutation with updated version.
+
+Expected outcome:
+1. Reorder/remove stale writes are deterministically rejected with conflict guidance and no queue mutation.
+2. Remove/reorder writes with matching expected version commit atomically and increment queue version exactly once.
+3. Playback stale writes are deterministically rejected with queue/playback retry metadata.
+4. Accepted playback updates always include both `queueVersion` and `playbackEpoch`.
+
+Edge cases:
+1. Missing expected queue version in remove/reorder payload is treated as stale/default conflict and returns deterministic `version_conflict` response.
+2. Repeated version conflicts keep reconciliation deterministic by applying latest retry metadata before next retry attempt.
+
+Validation evidence:
+1. `cd backend/jam-service && go test ./...`
+2. `cd backend/playback-service && go test ./...`
+3. `cd frontend && bun run test src/components/jam/jam-room-client.test.tsx`
+
 ### Flow 5: Kafka Event Foundation Baseline
 
 Steps:

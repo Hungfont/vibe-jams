@@ -34,7 +34,7 @@ type QueueRepository interface {
 	EnsureSessionActive(jamID string) error
 
 	Add(jamID string, req model.AddQueueItemRequest) (model.QueueSnapshot, bool, error)
-	Remove(jamID string, itemID string, actorUserID string) (model.QueueSnapshot, error)
+	Remove(jamID string, expectedVersion int64, itemID string, actorUserID string) (model.QueueSnapshot, error)
 	Reorder(jamID string, expectedVersion int64, itemIDs []string, actorUserID string) (model.QueueSnapshot, error)
 	Snapshot(jamID string) (model.QueueSnapshot, error)
 
@@ -222,7 +222,7 @@ func (s *Service) Remove(jamID string, req model.RemoveQueueItemRequest) (model.
 		return model.QueueSnapshot{}, err
 	}
 
-	snapshot, err := s.repo.Remove(jamID, req.ItemID, req.ActorUserID)
+	snapshot, err := s.repo.Remove(jamID, req.ExpectedQueueVersion, req.ItemID, req.ActorUserID)
 	if err != nil {
 		if errors.Is(err, repository.ErrModerationBlocked) {
 			return model.QueueSnapshot{}, ErrModerationBlocked
@@ -287,6 +287,11 @@ func (s *Service) SessionSnapshot(jamID string) (model.SessionSnapshot, error) {
 // IsVersionConflict reports whether an error is version conflict.
 func IsVersionConflict(err error) bool {
 	return errors.Is(err, repository.ErrVersionConflict)
+}
+
+// VersionConflictCurrentQueueVersion returns authoritative queue version on conflict.
+func VersionConflictCurrentQueueVersion(err error) (int64, bool) {
+	return repository.VersionConflictCurrentQueueVersion(err)
 }
 
 // IsNotFound reports whether an error is queue-item-not-found.

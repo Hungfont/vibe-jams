@@ -33,16 +33,33 @@ type ErrorBody struct {
 
 // ErrorPayload carries machine and human-readable details.
 type ErrorPayload struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Retry   *RetryGuidance `json:"retry,omitempty"`
+}
+
+// RetryGuidance carries authoritative metadata for deterministic conflict recovery.
+type RetryGuidance struct {
+	CurrentQueueVersion int64 `json:"currentQueueVersion"`
+	PlaybackEpoch       int64 `json:"playbackEpoch,omitempty"`
 }
 
 // Write writes standardized JSON error payload.
 func Write(w http.ResponseWriter, statusCode int, code string, message string) {
+	write(w, statusCode, code, message, nil)
+}
+
+// WriteWithRetry writes standardized JSON error payload with retry guidance.
+func WriteWithRetry(w http.ResponseWriter, statusCode int, code string, message string, retry *RetryGuidance) {
+	write(w, statusCode, code, message, retry)
+}
+
+func write(w http.ResponseWriter, statusCode int, code string, message string, retry *RetryGuidance) {
 	body := ErrorBody{
 		Error: ErrorPayload{
 			Code:    code,
 			Message: message,
+			Retry:   retry,
 		},
 	}
 
