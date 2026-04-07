@@ -14,6 +14,8 @@ const (
 	CodePremiumRequired = "premium_required"
 	// CodeHostOnly is returned when a non-host executes host-only operation.
 	CodeHostOnly = "host_only"
+	// CodePermissionDenied is returned when actor lacks command capability.
+	CodePermissionDenied = "permission_denied"
 	// CodeNotFound is returned when a requested queue item cannot be found.
 	CodeNotFound = "not_found"
 	// CodeVersionConflict is returned when optimistic concurrency check fails.

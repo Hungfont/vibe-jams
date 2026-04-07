@@ -222,6 +222,11 @@ func delegatedBFFRouteSpecs() map[string]any {
 			"Kick participant",
 			[]map[string]any{jamIDPathParam},
 		),
+		"/api/v1/jams/{jamId}/permissions": bffDelegatedOperation(
+			httpMethodPost,
+			"Update guest permissions",
+			[]map[string]any{jamIDPathParam},
+		),
 		"/v1/jam/sessions/{jamId}/playback/commands": bffDelegatedOperation(
 			httpMethodPost,
 			"Send playback command",
@@ -289,6 +294,7 @@ func bffDelegatedOperation(method, summary string, parameters []map[string]any) 
 			"200": map[string]any{"description": "Delegated upstream response"},
 			"400": errorResponse("Invalid request input"),
 			"401": errorResponse("Unauthorized"),
+			"403": errorResponse("Forbidden"),
 			"404": errorResponse("Resource not found"),
 			"503": errorResponse("Dependency unavailable"),
 		},

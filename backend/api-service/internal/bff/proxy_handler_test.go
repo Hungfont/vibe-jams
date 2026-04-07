@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"video-streaming/backend/api-service/internal/config"
 )
@@ -62,7 +64,15 @@ func TestProxyHandler_PlaybackAndCatalogDelegation(t *testing.T) {
 	playbackCalled := false
 	catalogCalled := false
 
-	jamServer := httptest.NewServer(http.NotFoundHandler())
+	jamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/jams/jam_1/state":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"session":{"jamId":"jam_1","hostUserId":"host_1","status":"active","permissions":{"canControlPlayback":false,"canReorderQueue":false,"canChangeVolume":false},"participants":[{"userId":"host_1","role":"host"}],"sessionVersion":3},"queue":{"jamId":"jam_1","queueVersion":2,"items":[]},"aggregateVersion":3}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
 	defer jamServer.Close()
 	playbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		playbackCalled = true
@@ -87,7 +97,11 @@ func TestProxyHandler_PlaybackAndCatalogDelegation(t *testing.T) {
 	}
 
 	recPlayback := httptest.NewRecorder()
-	h.ServeHTTP(recPlayback, httptest.NewRequest(http.MethodPost, "/v1/jam/sessions/jam_1/playback/commands", nil))
+	playbackReq := httptest.NewRequest(http.MethodPost, "/v1/jam/sessions/jam_1/playback/commands", strings.NewReader(`{"command":"play"}`))
+	playbackReq.Header.Set("X-Auth-UserId", "host_1")
+	playbackReq.Header.Set("X-Auth-Plan", "premium")
+	playbackReq.Header.Set("X-Auth-SessionState", "valid")
+	h.ServeHTTP(recPlayback, playbackReq)
 	if recPlayback.Code != http.StatusOK {
 		t.Fatalf("playback status mismatch: got %d want %d", recPlayback.Code, http.StatusOK)
 	}
@@ -103,6 +117,98 @@ func TestProxyHandler_PlaybackAndCatalogDelegation(t *testing.T) {
 	}
 	if !catalogCalled {
 		t.Fatal("expected catalog downstream to be called")
+	}
+}
+
+func TestProxyHandler_PlaybackRoute_GuestWithoutPermissionDenied(t *testing.T) {
+	t.Parallel()
+
+	jamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/jams/jam_1/state":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"session":{"jamId":"jam_1","hostUserId":"host_1","status":"active","permissions":{"canControlPlayback":false,"canReorderQueue":false,"canChangeVolume":false},"participants":[{"userId":"host_1","role":"host"},{"userId":"member_1","role":"member"}],"sessionVersion":3},"queue":{"jamId":"jam_1","queueVersion":2,"items":[]},"aggregateVersion":3}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer jamServer.Close()
+
+	playbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"accepted":true}`))
+	}))
+	defer playbackServer.Close()
+
+	h, err := NewProxyHandler(config.Config{
+		JamServiceURL:      jamServer.URL,
+		PlaybackServiceURL: playbackServer.URL,
+		CatalogServiceURL:  "http://localhost:8083",
+		RTGatewayURL:       "http://localhost:8086",
+		GatewayPublicURL:   "http://localhost:8085",
+		JamTimeout:         1200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/jam/sessions/jam_1/playback/commands", strings.NewReader(`{"command":"play"}`))
+	req.Header.Set("X-Auth-UserId", "member_1")
+	req.Header.Set("X-Auth-Plan", "free")
+	req.Header.Set("X-Auth-SessionState", "valid")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusForbidden)
+	}
+}
+
+func TestProxyHandler_ReorderRoute_GuestWithoutPermissionDenied(t *testing.T) {
+	t.Parallel()
+
+	forwarded := false
+	jamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/jams/jam_1/state":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"session":{"jamId":"jam_1","hostUserId":"host_1","status":"active","permissions":{"canControlPlayback":false,"canReorderQueue":false,"canChangeVolume":false},"participants":[{"userId":"host_1","role":"host"},{"userId":"member_1","role":"member"}],"sessionVersion":3},"queue":{"jamId":"jam_1","queueVersion":2,"items":[]},"aggregateVersion":3}`))
+		case "/api/v1/jams/jam_1/queue/reorder":
+			forwarded = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"jamId":"jam_1","queueVersion":3,"items":[]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer jamServer.Close()
+
+	h, err := NewProxyHandler(config.Config{
+		JamServiceURL:      jamServer.URL,
+		PlaybackServiceURL: "http://localhost:8082",
+		CatalogServiceURL:  "http://localhost:8083",
+		RTGatewayURL:       "http://localhost:8086",
+		GatewayPublicURL:   "http://localhost:8085",
+		JamTimeout:         1200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jams/jam_1/queue/reorder", strings.NewReader(`{"itemIds":["a"],"expectedQueueVersion":2}`))
+	req.Header.Set("X-Auth-UserId", "member_1")
+	req.Header.Set("X-Auth-Plan", "free")
+	req.Header.Set("X-Auth-SessionState", "valid")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusForbidden)
+	}
+	if forwarded {
+		t.Fatal("reorder should not be forwarded for guest without permission")
 	}
 }
 
@@ -183,5 +289,107 @@ func TestProxyHandler_RealtimeWSProxy_RewritesToRTGatewayWSPath(t *testing.T) {
 	}
 	if gotQuery != "sessionId=jam_1&lastSeenVersion=7" {
 		t.Fatalf("query mismatch: got %q", gotQuery)
+	}
+}
+
+func TestProxyHandler_ModerationRoute_NonHostDeniedAtAPIService(t *testing.T) {
+	t.Parallel()
+
+	moderationForwarded := false
+	jamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/jams/jam_1/state":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"session":{"jamId":"jam_1","hostUserId":"host_1","status":"active","participants":[{"userId":"host_1","role":"host"}],"sessionVersion":3},"queue":{"jamId":"jam_1","queueVersion":2,"items":[]},"aggregateVersion":3}`))
+		case "/api/v1/jams/jam_1/moderation/mute":
+			moderationForwarded = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer jamServer.Close()
+
+	h, err := NewProxyHandler(config.Config{
+		JamServiceURL:      jamServer.URL,
+		PlaybackServiceURL: "http://localhost:8082",
+		CatalogServiceURL:  "http://localhost:8083",
+		RTGatewayURL:       "http://localhost:8086",
+		GatewayPublicURL:   "http://localhost:8085",
+		JamTimeout:         1200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jams/jam_1/moderation/mute", nil)
+	req.Header.Set("X-Auth-UserId", "member_1")
+	req.Header.Set("X-Auth-Plan", "free")
+	req.Header.Set("X-Auth-SessionState", "valid")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusForbidden)
+	}
+	if moderationForwarded {
+		t.Fatal("moderation command should not be forwarded for non-host actor")
+	}
+
+	var env Envelope
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if env.Error == nil || env.Error.Code != "host_only" {
+		t.Fatalf("error code mismatch: %+v", env.Error)
+	}
+}
+
+func TestProxyHandler_ModerationRoute_HostForwardedByAPIService(t *testing.T) {
+	t.Parallel()
+
+	forwardCount := 0
+	jamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/jams/jam_1/state":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"session":{"jamId":"jam_1","hostUserId":"host_1","status":"active","participants":[{"userId":"host_1","role":"host"}],"sessionVersion":3},"queue":{"jamId":"jam_1","queueVersion":2,"items":[]},"aggregateVersion":3}`))
+		case "/api/v1/jams/jam_1/moderation/kick":
+			forwardCount++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer jamServer.Close()
+
+	h, err := NewProxyHandler(config.Config{
+		JamServiceURL:      jamServer.URL,
+		PlaybackServiceURL: "http://localhost:8082",
+		CatalogServiceURL:  "http://localhost:8083",
+		RTGatewayURL:       "http://localhost:8086",
+		GatewayPublicURL:   "http://localhost:8085",
+		JamTimeout:         1200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewProxyHandler() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jams/jam_1/moderation/kick", nil)
+	req.Header.Set("X-Auth-UserId", "host_1")
+	req.Header.Set("X-Auth-Plan", "premium")
+	req.Header.Set("X-Auth-SessionState", "valid")
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusOK)
+	}
+	if forwardCount != 1 {
+		t.Fatalf("expected one forwarded moderation call, got %d", forwardCount)
 	}
 }

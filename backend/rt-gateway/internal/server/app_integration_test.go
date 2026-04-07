@@ -363,3 +363,87 @@ func TestModerationTopicInvokesHookAndFansOut(t *testing.T) {
 		t.Fatalf("StartConsumer() error = %v", consumeErr)
 	}
 }
+
+func TestPermissionTopicFansOutToSubscribers(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		ServerHost:           "127.0.0.1",
+		ServerPort:           0,
+		ReadHeaderTimeout:    5 * time.Second,
+		IdleTimeout:          30 * time.Second,
+		ShutdownTimeout:      5 * time.Second,
+		JamServiceURL:        "http://localhost:8080",
+		SnapshotTimeout:      500 * time.Millisecond,
+		FanoutBufferSize:     8,
+		ConsumerGroupID:      "rt-gateway-fanout",
+		QueueTopic:           "jam.queue.events",
+		PlaybackTopic:        "jam.playback.events",
+		ModerationTopic:      "jam.moderation.events",
+		PermissionTopic:      "jam.permission.events",
+		KafkaBootstrap:       "localhost:9092",
+		ConsumerBackend:      "kafka",
+		AllowedOrigins:       []string{"http://localhost:3000"},
+		RecoveryMaxRetries:   1,
+		RecoveryBackoff:      5 * time.Millisecond,
+		FeatureFanoutEnabled: true,
+	}
+
+	consumer := kafka.NewInMemoryConsumer(8)
+	app := NewApp(cfg, consumer)
+	testServer := httptest.NewServer(app.Handler())
+	defer testServer.Close()
+
+	consumeCtx, cancelConsume := context.WithCancel(context.Background())
+	defer cancelConsume()
+	consumerErrCh := make(chan error, 1)
+	go func() {
+		consumerErrCh <- app.StartConsumer(consumeCtx)
+	}()
+
+	wsURL := "ws" + strings.TrimPrefix(testServer.URL, "http") + "/ws?sessionId=jam_1"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, http.Header{"Origin": []string{"http://localhost:3000"}})
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	envelope, err := sharedevent.MarshalEnvelope(sharedevent.Envelope{
+		EventID:          "evt-perm-1",
+		EventType:        "jam.permission.updated",
+		SessionID:        "jam_1",
+		AggregateVersion: 1,
+		OccurredAt:       time.Now().UTC(),
+		Payload: sharedevent.MustPayload(map[string]any{
+			"canControlPlayback": true,
+			"canReorderQueue":    false,
+			"canChangeVolume":    false,
+		}),
+	}, true)
+	if err != nil {
+		t.Fatalf("MarshalEnvelope() error = %v", err)
+	}
+
+	if ok := consumer.Publish(kafka.Record{Topic: cfg.PermissionTopic, Value: envelope}); !ok {
+		t.Fatal("failed to publish permission test record")
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, message, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read websocket message: %v", err)
+	}
+
+	var outbound model.OutboundEvent
+	if err := json.Unmarshal(message, &outbound); err != nil {
+		t.Fatalf("decode outbound message: %v", err)
+	}
+	if outbound.EventType != "jam.permission.updated" {
+		t.Fatalf("event type mismatch: got %q want jam.permission.updated", outbound.EventType)
+	}
+
+	cancelConsume()
+	if consumeErr := <-consumerErrCh; consumeErr != nil && consumeErr != context.Canceled {
+		t.Fatalf("StartConsumer() error = %v", consumeErr)
+	}
+}

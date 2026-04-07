@@ -27,12 +27,20 @@ type SessionParticipant struct {
 	Muted  bool        `json:"muted,omitempty"`
 }
 
+// SessionPermissions defines session-scoped guest command capabilities.
+type SessionPermissions struct {
+	CanControlPlayback bool `json:"canControlPlayback"`
+	CanReorderQueue    bool `json:"canReorderQueue"`
+	CanChangeVolume    bool `json:"canChangeVolume"`
+}
+
 // SessionSnapshot describes persisted jam session metadata and participants.
 type SessionSnapshot struct {
 	JamID          string               `json:"jamId"`
 	Status         SessionStatus        `json:"status"`
 	HostUserID     string               `json:"hostUserId"`
 	Participants   []SessionParticipant `json:"participants"`
+	Permissions    SessionPermissions   `json:"permissions"`
 	SessionVersion int64                `json:"sessionVersion"`
 	EndCause       string               `json:"endCause,omitempty"`
 	EndedBy        string               `json:"endedBy,omitempty"`
@@ -84,4 +92,11 @@ type ReorderQueueRequest struct {
 type ModerationCommandRequest struct {
 	TargetUserID string `json:"targetUserId"`
 	Reason       string `json:"reason,omitempty"`
+}
+
+// PermissionUpdateRequest defines host-managed guest capability updates.
+type PermissionUpdateRequest struct {
+	CanControlPlayback *bool `json:"canControlPlayback,omitempty"`
+	CanReorderQueue    *bool `json:"canReorderQueue,omitempty"`
+	CanChangeVolume    *bool `json:"canChangeVolume,omitempty"`
 }

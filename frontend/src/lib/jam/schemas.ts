@@ -33,6 +33,12 @@ export const moderationCommandSchema = z.object({
   reason: z.string().trim().optional(),
 });
 
+export const permissionUpdateSchema = z.object({
+  canControlPlayback: z.boolean().optional(),
+  canReorderQueue: z.boolean().optional(),
+  canChangeVolume: z.boolean().optional(),
+});
+
 const claimsSchema = z.object({
   userId: z.string().trim().min(1, "userId is required"),
   plan: z.string().trim().min(1, "plan is required"),
@@ -51,6 +57,13 @@ const sessionSnapshotSchema = z.object({
   status: z.string().trim().min(1, "status is required"),
   hostUserId: z.string().trim().min(1, "hostUserId is required"),
   participants: z.array(sessionParticipantSchema),
+  permissions: z
+    .object({
+      canControlPlayback: z.boolean(),
+      canReorderQueue: z.boolean(),
+      canChangeVolume: z.boolean(),
+    })
+    .optional(),
   sessionVersion: z.number().int().nonnegative("sessionVersion must be non-negative"),
   endCause: z.string().trim().optional(),
   endedBy: z.string().trim().optional(),

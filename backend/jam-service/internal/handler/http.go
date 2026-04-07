@@ -66,6 +66,11 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if jamID, ok := parseJamPermissionRoute(r.URL.Path); ok {
+		h.handlePermissions(jamID, w, r)
+		return
+	}
+
 	jamID, action, ok := parseJamQueueRoute(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
@@ -311,7 +316,7 @@ func (h *HTTPHandler) handleMute(jamID string, w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	snapshot, err := h.service.MuteParticipant(r.Context(), jamID, claims.UserID, req)
+	snapshot, err := h.service.MuteParticipant(r.Context(), jamID, claims, req)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -337,13 +342,48 @@ func (h *HTTPHandler) handleKick(jamID string, w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	snapshot, err := h.service.KickParticipant(r.Context(), jamID, claims.UserID, req)
+	snapshot, err := h.service.KickParticipant(r.Context(), jamID, claims, req)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
 
 	writeJSON(w, http.StatusOK, snapshot)
+}
+
+// handlePermissions reads or updates guest permission projection for one session.
+func (h *HTTPHandler) handlePermissions(jamID string, w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.authorize(r.Context(), w, r, false)
+	if !ok {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		permissions, err := h.service.Permissions(jamID)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, permissions)
+		return
+	case http.MethodPost:
+		var req model.PermissionUpdateRequest
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+
+		snapshot, err := h.service.UpdatePermissions(r.Context(), jamID, claims, req)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, snapshot.Permissions)
+		return
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 }
 
 // decodeJSON parses JSON body and writes a consistent 400 response on errors.
@@ -395,6 +435,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		apierror.Write(w, http.StatusForbidden, apierror.CodeHostOnly, "host only command")
 	case service.IsModerationBlocked(err):
 		apierror.Write(w, http.StatusForbidden, apierror.CodeModerationBlocked, "blocked by moderation")
+	case service.IsPermissionDenied(err):
+		apierror.Write(w, http.StatusForbidden, apierror.CodePermissionDenied, "insufficient permission")
 	case service.IsSessionEnded(err):
 		apierror.Write(w, http.StatusConflict, apierror.CodeSessionEnded, "session has ended")
 	default:
@@ -503,4 +545,23 @@ func parseJamModerationRoute(path string) (jamID string, action string, ok bool)
 	default:
 		return "", "", false
 	}
+}
+
+// parseJamPermissionRoute extracts jam ID from /api/v1/jams/{jamId}/permissions.
+func parseJamPermissionRoute(path string) (jamID string, ok bool) {
+	const prefix = "/api/v1/jams/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+
+	trimmed := strings.TrimPrefix(path, prefix)
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 2 || parts[1] != "permissions" {
+		return "", false
+	}
+	if parts[0] == "" {
+		return "", false
+	}
+
+	return parts[0], true
 }

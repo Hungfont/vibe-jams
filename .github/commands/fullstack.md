@@ -18,7 +18,7 @@ Run a fullstack OpenSpec-driven workflow from requirement review to integrated i
 
 <!-- ALWAYS project flows will apply the strictly flow with #Sequence1: HTTP Request/Response Flow in `docs/frontend-backend-sequence.md` files and never update this sequence for any request unless explicitly requested. -->
 
-**Primary path (always)**: `/opsx-propose` → approval gate → `/opsx:apply` (then `/opsx:archive` when complete).
+**Primary path (always)**: `/opsx-propose` → approval gate → `/opsx:apply` ->  `/opsx:archive`.
 
 ## Workflow
 
@@ -109,7 +109,7 @@ Run a fullstack OpenSpec-driven workflow from requirement review to integrated i
 - Must call AskUserQuestion gate and wait for explicit approval.
 - Any non-explicit approval means stop.
 - Never skip OpenSpec update when requirement changes are discovered.
-- Primary path is always: `/opsx-propose` → approval gate → `/opsx:apply`.
+- Primary path is always: `/opsx-propose` → approval gate → `/opsx:apply` -> `/opsx:archive` .
 - Do not re-implement artifact creation, agent context setup, or task execution — delegate fully to `/opsx-propose` and `/opsx:apply`.
 - Do not auto-select a change, even when only one active change exists.
 - Mandatory approval gate: explicit user approval required before `/opsx:apply`, immediately after propose output is presented.

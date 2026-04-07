@@ -67,4 +67,24 @@ func TestModerationEndpointsAndBlockedQueueCommand(t *testing.T) {
 	if queueErr.Error.Code != "moderation_blocked" {
 		t.Fatalf("error code mismatch: got %q want moderation_blocked", queueErr.Error.Code)
 	}
+
+	nonHostMuteReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+created.JamID+"/moderation/mute", bytes.NewBufferString(`{"targetUserId":"host_1","reason":"abuse"}`))
+	nonHostMuteReq.Header.Set("Authorization", "Bearer token-member")
+	nonHostMuteRec := httptest.NewRecorder()
+	memberHandler.ServeHTTP(nonHostMuteRec, nonHostMuteReq)
+	if nonHostMuteRec.Code != http.StatusForbidden {
+		t.Fatalf("non-host mute status mismatch: got %d want %d", nonHostMuteRec.Code, http.StatusForbidden)
+	}
+
+	var nonHostErr struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(nonHostMuteRec.Body).Decode(&nonHostErr); err != nil {
+		t.Fatalf("decode non-host mute error: %v", err)
+	}
+	if nonHostErr.Error.Code != "host_only" {
+		t.Fatalf("non-host mute error code mismatch: got %q want host_only", nonHostErr.Error.Code)
+	}
 }

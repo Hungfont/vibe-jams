@@ -21,6 +21,7 @@ const (
 	defaultQueueTopic           = "jam.queue.events"
 	defaultPlaybackTopic        = "jam.playback.events"
 	defaultModerationTopic      = "jam.moderation.events"
+	defaultPermissionTopic      = "jam.permission.events"
 	defaultRecoveryMaxRetries   = 3
 	defaultRecoveryBackoffMS    = 200
 	defaultFeatureFanoutEnabled = true
@@ -51,6 +52,7 @@ type Config struct {
 	QueueTopic      string
 	PlaybackTopic   string
 	ModerationTopic string
+	PermissionTopic string
 	AllowedOrigins  []string
 
 	RecoveryMaxRetries int
@@ -148,6 +150,7 @@ func LoadConfig() (Config, error) {
 		QueueTopic:      stringFromEnv("KAFKA_TOPIC_QUEUE", defaultQueueTopic),
 		PlaybackTopic:   stringFromEnv("KAFKA_TOPIC_PLAYBACK", defaultPlaybackTopic),
 		ModerationTopic: stringFromEnv("KAFKA_TOPIC_MODERATION", defaultModerationTopic),
+		PermissionTopic: stringFromEnv("KAFKA_TOPIC_PERMISSION", defaultPermissionTopic),
 		AllowedOrigins:  originAllowlist,
 
 		RecoveryMaxRetries: recoveryMaxRetries,

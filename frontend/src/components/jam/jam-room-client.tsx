@@ -29,12 +29,12 @@ import { ToastStack } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useToast } from "@/components/ui/use-toast";
 import type { ApiEnvelope, ConflictRetryGuidance } from "@/lib/api/types";
-import { addQueueItem, kickParticipant, muteParticipant, removeQueueItem, reorderQueue } from "@/lib/jam/actions";
+import { addQueueItem, kickParticipant, muteParticipant, removeQueueItem, reorderQueue, updateSessionPermissions } from "@/lib/jam/actions";
 import { endJamSession, executePlayback, fetchJamState, fetchOrchestration, fetchRealtimeWsConfig } from "@/lib/jam/client";
 import { BLOCKING_CODES, type RoomTab } from "@/lib/jam/constants";
 import { isSnapshotRecovery, reduceRealtimeVersion, type RoomRealtimeEvent } from "@/lib/jam/realtime";
 import { bffOrchestrationDataSchema } from "@/lib/jam/schemas";
-import type { BffOrchestrationData, QueueSnapshot, SessionSnapshot } from "@/lib/jam/types";
+import type { BffOrchestrationData, QueueSnapshot, SessionPermissions, SessionSnapshot } from "@/lib/jam/types";
 
 interface JamRoomClientProps {
   jamId: string;
@@ -122,6 +122,13 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
   const hasRequiredRoomState = Boolean(room?.sessionState?.session && room?.sessionState?.queue);
   const isEnded = room?.sessionState?.session?.status === "ended";
   const isHost = Boolean(room?.claims?.userId && room?.sessionState?.session?.hostUserId && room.claims.userId === room.sessionState.session.hostUserId);
+  const permissions: SessionPermissions = {
+    canControlPlayback: room?.sessionState.session.permissions?.canControlPlayback ?? false,
+    canReorderQueue: room?.sessionState.session.permissions?.canReorderQueue ?? false,
+    canChangeVolume: room?.sessionState.session.permissions?.canChangeVolume ?? false,
+  };
+  const canControlPlayback = isHost || permissions.canControlPlayback;
+  const canReorderQueue = isHost || permissions.canReorderQueue;
 
   const refreshSnapshot = React.useCallback(async () => {
     const state = await fetchJamState(jamId);
@@ -304,7 +311,7 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
   );
 
   const handleReorderReverse = React.useCallback(async () => {
-    if (!room || isEnded) {
+    if (!room || isEnded || !canReorderQueue) {
       return;
     }
 
@@ -323,11 +330,11 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
     }
 
     swr.mutate((current) => (current ? mergeQueue(current, response.data as QueueSnapshot) : current), false);
-  }, [isEnded, jamId, room, runQueueMutation, swr, toast]);
+  }, [canReorderQueue, isEnded, jamId, room, runQueueMutation, swr, toast]);
 
   const handlePlayback = React.useCallback(
     async (command: "play" | "pause" | "next" | "prev" | "seek") => {
-      if (!room || isEnded || !isHost || pendingPlayback) {
+      if (!room || isEnded || !canControlPlayback || pendingPlayback) {
         return;
       }
 
@@ -357,7 +364,43 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
       setPendingPlayback(command);
       toast({ title: "Playback accepted", description: `Command ${command} queued` });
     },
-    [isEnded, isHost, jamId, pendingPlayback, positionMs, reconcileConflict, refreshSnapshot, room, toast],
+    [canControlPlayback, isEnded, jamId, pendingPlayback, positionMs, reconcileConflict, refreshSnapshot, room, toast],
+  );
+
+  const handlePermissionToggle = React.useCallback(
+    async (key: keyof SessionPermissions, value: boolean) => {
+      if (!room || !isHost || isEnded) {
+        return;
+      }
+
+      const response = await updateSessionPermissions(jamId, { [key]: value });
+      if (!response.success || !response.data) {
+        setLocalError(response.error?.message ?? "Unable to update permissions");
+        toast({ title: "Permission update failed", description: response.error?.message, variant: "error" });
+        return;
+      }
+
+      swr.mutate(
+        (current) => {
+          if (!current) {
+            return current;
+          }
+          return {
+            ...current,
+            sessionState: {
+              ...current.sessionState,
+              session: {
+                ...current.sessionState.session,
+                permissions: response.data,
+              },
+            },
+          };
+        },
+        false,
+      );
+      toast({ title: "Permissions updated", description: `${key} set to ${String(value)}` });
+    },
+    [isEnded, isHost, jamId, room, swr, toast],
   );
 
   React.useEffect(() => {
@@ -522,7 +565,7 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                         placeholder="Track ID"
                       />
                       <Button onClick={() => void handleAddTrack()} disabled={isEnded || !trackId}>Add</Button>
-                      <Button variant="secondary" onClick={() => void handleReorderReverse()} disabled={isEnded}>
+                      <Button variant="secondary" onClick={() => void handleReorderReverse()} disabled={isEnded || !canReorderQueue}>
                         Reverse
                       </Button>
                     </div>
@@ -562,12 +605,12 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                       {(["play", "pause", "next", "prev", "seek"] as const).map((command) => (
                         <Tooltip
                           key={command}
-                          content={!isHost ? "Host only control" : isEnded ? "Session ended" : command}
+                          content={!canControlPlayback ? "Permission required" : isEnded ? "Session ended" : command}
                         >
                           <Button
                             className="w-full"
                             variant={command === "pause" ? "secondary" : "default"}
-                            disabled={!isHost || isEnded || Boolean(pendingPlayback)}
+                            disabled={!canControlPlayback || isEnded || Boolean(pendingPlayback)}
                             onClick={() => void handlePlayback(command)}
                           >
                             {command}
@@ -582,7 +625,7 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                         max={300000}
                         value={positionMs}
                         onChange={(event) => setPositionMs(Number(event.target.value))}
-                        disabled={!isHost || isEnded || Boolean(pendingPlayback)}
+                        disabled={!canControlPlayback || isEnded || Boolean(pendingPlayback)}
                       />
                     </div>
                     {pendingPlayback ? <p className="text-xs text-amber-300">Pending command: {pendingPlayback}</p> : null}
@@ -604,6 +647,37 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                         disabled={isEnded}
                       />
                     ) : null}
+                    <Card className="border-zinc-800 bg-zinc-900">
+                      <CardContent className="space-y-2 p-3">
+                        <p className="text-xs text-zinc-400">Guest Permissions</p>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          <Button
+                            size="sm"
+                            variant={permissions.canControlPlayback ? "default" : "outline"}
+                            disabled={!isHost || isEnded}
+                            onClick={() => void handlePermissionToggle("canControlPlayback", !permissions.canControlPlayback)}
+                          >
+                            Playback: {permissions.canControlPlayback ? "on" : "off"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={permissions.canReorderQueue ? "default" : "outline"}
+                            disabled={!isHost || isEnded}
+                            onClick={() => void handlePermissionToggle("canReorderQueue", !permissions.canReorderQueue)}
+                          >
+                            Reorder: {permissions.canReorderQueue ? "on" : "off"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={permissions.canChangeVolume ? "default" : "outline"}
+                            disabled={!isHost || isEnded}
+                            onClick={() => void handlePermissionToggle("canChangeVolume", !permissions.canChangeVolume)}
+                          >
+                            Volume: {permissions.canChangeVolume ? "on" : "off"}
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
                     {room.sessionState.session.participants.map((participant) => (
                       <div
                         className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2"
@@ -673,9 +747,9 @@ export function JamRoomClient({ jamId, initialView, initialData, initialError }:
                 <p className="text-sm font-medium">Queue items: {room.sessionState.queue.items.length}</p>
               </div>
               <div className="flex items-center gap-2">
-                <Button size="sm" variant="secondary" disabled={!isHost || isEnded || Boolean(pendingPlayback)} onClick={() => void handlePlayback("prev")}>Prev</Button>
-                <Button size="sm" disabled={!isHost || isEnded || Boolean(pendingPlayback)} onClick={() => void handlePlayback("play")}>Play</Button>
-                <Button size="sm" variant="secondary" disabled={!isHost || isEnded || Boolean(pendingPlayback)} onClick={() => void handlePlayback("next")}>Next</Button>
+                <Button size="sm" variant="secondary" disabled={!canControlPlayback || isEnded || Boolean(pendingPlayback)} onClick={() => void handlePlayback("prev")}>Prev</Button>
+                <Button size="sm" disabled={!canControlPlayback || isEnded || Boolean(pendingPlayback)} onClick={() => void handlePlayback("play")}>Play</Button>
+                <Button size="sm" variant="secondary" disabled={!canControlPlayback || isEnded || Boolean(pendingPlayback)} onClick={() => void handlePlayback("next")}>Next</Button>
               </div>
               <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                 <DialogTrigger asChild>

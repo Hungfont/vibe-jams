@@ -7,6 +7,7 @@ const (
 	TopicJamQueue      = "jam.queue.events"
 	TopicJamPlayback   = "jam.playback.events"
 	TopicJamModeration = "jam.moderation.events"
+	TopicJamPermission = "jam.permission.events"
 	TopicAnalyticsUser = "analytics.user.actions"
 )
 
@@ -23,5 +24,6 @@ var Phase1TopicConfigs = []TopicConfig{
 	{Name: TopicJamQueue, Partitions: 24, Retention: 7 * 24 * time.Hour},
 	{Name: TopicJamPlayback, Partitions: 12, Retention: 7 * 24 * time.Hour},
 	{Name: TopicJamModeration, Partitions: 12, Retention: 7 * 24 * time.Hour},
+	{Name: TopicJamPermission, Partitions: 12, Retention: 7 * 24 * time.Hour},
 	{Name: TopicAnalyticsUser, Partitions: 24, Retention: 14 * 24 * time.Hour},
 }

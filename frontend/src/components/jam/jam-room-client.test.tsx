@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   muteParticipant: vi.fn(),
   removeQueueItem: vi.fn(),
   reorderQueue: vi.fn(),
+  updateSessionPermissions: vi.fn(),
   endJamSession: vi.fn(),
   executePlayback: vi.fn(),
   fetchJamState: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/lib/jam/actions", () => ({
   muteParticipant: mocks.muteParticipant,
   removeQueueItem: mocks.removeQueueItem,
   reorderQueue: mocks.reorderQueue,
+  updateSessionPermissions: mocks.updateSessionPermissions,
 }));
 
 vi.mock("@/lib/jam/client", () => ({
@@ -122,6 +124,7 @@ describe("JamRoomClient", () => {
     mocks.muteParticipant.mockReset();
     mocks.removeQueueItem.mockReset();
     mocks.reorderQueue.mockReset();
+    mocks.updateSessionPermissions.mockReset();
     mocks.endJamSession.mockReset();
     mocks.executePlayback.mockReset();
     mocks.fetchJamState.mockReset();
@@ -136,6 +139,14 @@ describe("JamRoomClient", () => {
         wsUrl: "ws://localhost:8085/ws",
         sessionId: "jam-1",
         lastSeenVersion: "5",
+      },
+    });
+    mocks.updateSessionPermissions.mockResolvedValue({
+      success: true,
+      data: {
+        canControlPlayback: false,
+        canReorderQueue: false,
+        canChangeVolume: false,
       },
     });
     mocks.endJamSession.mockResolvedValue({ success: true });
@@ -221,11 +232,91 @@ describe("JamRoomClient", () => {
       />,
     );
 
-    expect(screen.getAllByText("Host only control").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Permission required").length).toBeGreaterThan(0);
 
     const playButtons = screen.getAllByRole("button", { name: "Play" });
     await userEvent.click(playButtons[0]);
     expect(mocks.executePlayback).not.toHaveBeenCalled();
+  });
+
+  it("allows non-host playback interactions when playback permission is enabled", async () => {
+    const room = buildRoom({
+      claims: {
+        userId: "member-1",
+        plan: "premium",
+        sessionState: "valid",
+      },
+      sessionState: {
+        session: {
+          jamId: "jam-1",
+          status: "active",
+          hostUserId: "host-1",
+          participants: [
+            { userId: "host-1", role: "host" },
+            { userId: "member-1", role: "member" },
+          ],
+          permissions: {
+            canControlPlayback: true,
+            canReorderQueue: false,
+            canChangeVolume: false,
+          },
+          sessionVersion: 3,
+        },
+        queue: {
+          jamId: "jam-1",
+          queueVersion: 2,
+          items: [
+            { itemId: "i-1", trackId: "track-1", addedBy: "host-1" },
+            { itemId: "i-2", trackId: "track-2", addedBy: "member-1" },
+          ],
+        },
+        aggregateVersion: 5,
+      },
+    });
+
+    mocks.executePlayback.mockResolvedValue({
+      success: true,
+      data: {
+        accepted: true,
+        queueVersion: 2,
+        playbackEpoch: 10,
+      },
+    });
+
+    render(<JamRoomClient jamId="jam-1" initialView="playback" initialData={room} />);
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Play" })[0]);
+
+    await waitFor(() => {
+      expect(mocks.executePlayback).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("allows host to update guest permissions", async () => {
+    mocks.updateSessionPermissions.mockResolvedValue({
+      success: true,
+      data: {
+        canControlPlayback: true,
+        canReorderQueue: false,
+        canChangeVolume: false,
+      },
+    });
+
+    render(
+      <JamRoomClient
+        jamId="jam-1"
+        initialView="participants"
+        initialData={buildRoom()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Playback: off" }));
+
+    await waitFor(() => {
+      expect(mocks.updateSessionPermissions).toHaveBeenCalledWith("jam-1", { canControlPlayback: true });
+    });
+
+    expect(screen.getByRole("button", { name: "Playback: on" })).toBeInTheDocument();
   });
 
   it("allows host moderation actions and renders muted state", async () => {

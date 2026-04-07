@@ -62,6 +62,7 @@ The sections below are intentionally ordered by page runtime path.
 - User action flows:
     - Queue actions: add/remove/reorder
     - Moderation actions (host): mute/kick participants
+    - Permission projection updates (host): playback/reorder/volume guest toggles
     - Playback commands: play/pause/next/prev/seek
     - End session (host)
 - Frontend API routes used:
@@ -72,6 +73,8 @@ The sections below are intentionally ordered by page runtime path.
     - `POST /api/jam/{jamId}/queue/reorder`
     - `POST /api/jam/{jamId}/moderation/mute`
     - `POST /api/jam/{jamId}/moderation/kick`
+    - `GET /api/jam/{jamId}/permissions`
+    - `POST /api/jam/{jamId}/permissions`
     - `POST /api/jam/{jamId}/playback/commands`
     - `POST /api/jam/{jamId}/end`
 - UI primitives used from frontend/src/components/ui:
@@ -202,6 +205,24 @@ sequenceDiagram
     G-->>N: upstream response
     N-->>U: Envelope success/error
 
+    U->>N: GET /api/jam/{jamId}/permissions
+    N->>G: GET /api/v1/jams/{jamId}/permissions
+    G->>B: GET /api/v1/jams/{jamId}/permissions (X-Auth-* headers)
+    B->>J: GET /api/v1/jams/{jamId}/permissions
+    J-->>B: SessionPermissions
+    B-->>G: normalized result
+    G-->>N: upstream response
+    N-->>U: Envelope success/error
+
+    U->>N: POST /api/jam/{jamId}/permissions
+    N->>G: POST /api/v1/jams/{jamId}/permissions
+    G->>B: POST /api/v1/jams/{jamId}/permissions (X-Auth-* headers)
+    B->>J: POST /api/v1/jams/{jamId}/permissions
+    J-->>B: updated SessionPermissions or deterministic 403/400
+    B-->>G: normalized result
+    G-->>N: upstream response
+    N-->>U: Envelope success/error
+
     U->>N: GET /api/catalog/tracks/{trackId}
     N->>G: GET /v1/bff/mvp/catalog/tracks/{trackId}
     G->>B: GET /v1/bff/mvp/catalog/tracks/{trackId}
@@ -261,10 +282,12 @@ sequenceDiagram
     and
         J->>K: Publish jam.moderation.* events
     and
+        J->>K: Publish jam.permission.events
+    and
         P->>K: Publish jam.playback.updated events
     end
 
-    R->>K: Consume queue/playback/moderation topics
+    R->>K: Consume queue/playback/moderation/permission topics
     R-->>U: Fanout outbound realtime events
 
     alt Gap or stale cursor detected
@@ -294,6 +317,8 @@ sequenceDiagram
 | POST /api/jam/{jamId}/queue/reorder | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/queue/reorder |
 | POST /api/jam/{jamId}/moderation/mute | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/moderation/mute |
 | POST /api/jam/{jamId}/moderation/kick | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/moderation/kick |
+| GET /api/jam/{jamId}/permissions | api-gateway -> api-service (BFF) -> jam-service | GET /api/v1/jams/{jamId}/permissions |
+| POST /api/jam/{jamId}/permissions | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/permissions |
 | POST /api/jam/{jamId}/playback/commands | api-gateway -> api-service (BFF) -> playback-service | POST /v1/jam/sessions/{jamId}/playback/commands |
 | GET /api/catalog/tracks/{trackId} | api-gateway -> api-service (BFF) -> catalog-service | GET /internal/v1/catalog/tracks/{trackId} |
 | POST /api/bff/jam/{jamId}/orchestration | api-gateway -> api-service (BFF) | POST /v1/bff/mvp/sessions/{jamId}/orchestration |

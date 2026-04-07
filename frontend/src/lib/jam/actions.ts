@@ -1,7 +1,8 @@
 import type { ApiEnvelope } from "@/lib/api/types";
-import type { QueueSnapshot, SessionSnapshot } from "@/lib/jam/types";
+import type { QueueSnapshot, SessionPermissions, SessionSnapshot } from "@/lib/jam/types";
 import {
   moderationCommandSchema,
+  permissionUpdateSchema,
   queueAddSchema,
   queueRemoveSchema,
   queueReorderSchema,
@@ -110,4 +111,42 @@ export async function kickParticipant(jamId: string, payload: unknown): Promise<
   });
 
   return (await response.json()) as ApiEnvelope<SessionSnapshot>;
+}
+
+export async function updateSessionPermissions(
+  jamId: string,
+  payload: unknown,
+): Promise<ApiEnvelope<SessionPermissions>> {
+  const parsed = permissionUpdateSchema.safeParse(payload);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: {
+        code: "invalid_input",
+        message: "invalid permissions payload",
+      },
+    };
+  }
+
+  if (
+    parsed.data.canControlPlayback === undefined &&
+    parsed.data.canReorderQueue === undefined &&
+    parsed.data.canChangeVolume === undefined
+  ) {
+    return {
+      success: false,
+      error: {
+        code: "invalid_input",
+        message: "at least one permission field is required",
+      },
+    };
+  }
+
+  const response = await fetch(`/api/jam/${encodeURIComponent(jamId)}/permissions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parsed.data),
+  });
+
+  return (await response.json()) as ApiEnvelope<SessionPermissions>;
 }

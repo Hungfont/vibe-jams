@@ -29,6 +29,10 @@ var (
 	ErrModerationBlocked = errors.New("moderation blocked")
 	// ErrModerationTargetInvalid indicates moderation target is invalid.
 	ErrModerationTargetInvalid = errors.New("invalid moderation target")
+	// ErrPermissionDenied indicates actor lacks permission for requested command.
+	ErrPermissionDenied = errors.New("permission denied")
+	// ErrPermissionUpdateRequired indicates no permission field was provided for update.
+	ErrPermissionUpdateRequired = errors.New("permission update required")
 )
 
 // VersionConflictError captures stale optimistic concurrency metadata.
@@ -69,6 +73,7 @@ type jamQueueState struct {
 	status            model.SessionStatus
 	hostUserID        string
 	participants      map[string]model.SessionRole
+	permissions       model.SessionPermissions
 	mutedUsers        map[string]bool
 	kickedUsers       map[string]bool
 	endCause          string
@@ -153,6 +158,7 @@ func (r *RedisQueueRepository) CreateSession(hostUserID string) (model.SessionSn
 		participants: map[string]model.SessionRole{
 			hostUserID: model.SessionRoleHost,
 		},
+		permissions: defaultPermissions(),
 		mutedUsers:  make(map[string]bool),
 		kickedUsers: make(map[string]bool),
 	}
@@ -438,7 +444,7 @@ func (r *RedisQueueRepository) Reorder(jamID string, expectedVersion int64, item
 	if err := ensureActive(state); err != nil {
 		return model.QueueSnapshot{}, err
 	}
-	if err := ensureActorCanMutate(state, actorUserID); err != nil {
+	if err := ensureActorCanReorder(state, actorUserID); err != nil {
 		return model.QueueSnapshot{}, err
 	}
 	if expectedVersion != state.queueVersion {
@@ -484,6 +490,61 @@ func (r *RedisQueueRepository) Reorder(jamID string, expectedVersion int64, item
 	}, nil
 }
 
+// Permissions returns current session permission projection for one jam.
+func (r *RedisQueueRepository) Permissions(jamID string) (model.SessionPermissions, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.SessionPermissions{}, err
+	}
+	return state.permissions, nil
+}
+
+// UpdatePermissions mutates one or more session permission flags. Host only.
+func (r *RedisQueueRepository) UpdatePermissions(jamID string, actorUserID string, req model.PermissionUpdateRequest) (model.SessionSnapshot, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	state, err := r.getSessionState(jamID)
+	if err != nil {
+		return model.SessionSnapshot{}, false, err
+	}
+	if err := ensureActive(state); err != nil {
+		return model.SessionSnapshot{}, false, err
+	}
+	if state.hostUserID != actorUserID {
+		return model.SessionSnapshot{}, false, ErrHostOwnershipRequired
+	}
+	if req.CanControlPlayback == nil && req.CanReorderQueue == nil && req.CanChangeVolume == nil {
+		return model.SessionSnapshot{}, false, ErrPermissionUpdateRequired
+	}
+
+	changed := false
+	if req.CanControlPlayback != nil && state.permissions.CanControlPlayback != *req.CanControlPlayback {
+		state.permissions.CanControlPlayback = *req.CanControlPlayback
+		changed = true
+	}
+	if req.CanReorderQueue != nil && state.permissions.CanReorderQueue != *req.CanReorderQueue {
+		state.permissions.CanReorderQueue = *req.CanReorderQueue
+		changed = true
+	}
+	if req.CanChangeVolume != nil && state.permissions.CanChangeVolume != *req.CanChangeVolume {
+		state.permissions.CanChangeVolume = *req.CanChangeVolume
+		changed = true
+	}
+
+	if changed {
+		state.sessionVersion++
+		if err := r.saveDurableStateLocked(); err != nil {
+			return model.SessionSnapshot{}, false, err
+		}
+	}
+
+	return buildSessionSnapshot(jamID, state), changed, nil
+}
+
 // Snapshot returns the latest committed queue state for a jam session.
 func (r *RedisQueueRepository) Snapshot(jamID string) (model.QueueSnapshot, error) {
 	r.mu.Lock()
@@ -512,6 +573,7 @@ func (r *RedisQueueRepository) ensureJamState(jamID string) *jamQueueState {
 		idempotencyResult: make(map[string]addResult),
 		status:            model.SessionStatusActive,
 		participants:      make(map[string]model.SessionRole),
+		permissions:       defaultPermissions(),
 		mutedUsers:        make(map[string]bool),
 		kickedUsers:       make(map[string]bool),
 	}
@@ -552,6 +614,7 @@ func buildSessionSnapshot(jamID string, state *jamQueueState) model.SessionSnaps
 		Status:         state.status,
 		HostUserID:     state.hostUserID,
 		Participants:   participants,
+		Permissions:    state.permissions,
 		SessionVersion: state.sessionVersion,
 		EndCause:       state.endCause,
 		EndedBy:        state.endedBy,
@@ -572,6 +635,27 @@ func ensureActorCanMutate(state *jamQueueState, actorUserID string) error {
 		return ErrModerationBlocked
 	}
 	return nil
+}
+
+func ensureActorCanReorder(state *jamQueueState, actorUserID string) error {
+	if err := ensureActorCanMutate(state, actorUserID); err != nil {
+		return err
+	}
+	if actorUserID == state.hostUserID {
+		return nil
+	}
+	if !state.permissions.CanReorderQueue {
+		return ErrPermissionDenied
+	}
+	return nil
+}
+
+func defaultPermissions() model.SessionPermissions {
+	return model.SessionPermissions{
+		CanControlPlayback: false,
+		CanReorderQueue:    false,
+		CanChangeVolume:    false,
+	}
 }
 
 // cloneItems returns a copy to keep repository internal state immutable externally.

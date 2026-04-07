@@ -36,9 +36,17 @@ type SessionSnapshot struct {
 	Status         string               `json:"status"`
 	HostUserID     string               `json:"hostUserId"`
 	Participants   []SessionParticipant `json:"participants"`
+	Permissions    SessionPermissions   `json:"permissions"`
 	SessionVersion int64                `json:"sessionVersion"`
 	EndCause       string               `json:"endCause,omitempty"`
 	EndedBy        string               `json:"endedBy,omitempty"`
+}
+
+// SessionPermissions mirrors jam permission projection schema.
+type SessionPermissions struct {
+	CanControlPlayback bool `json:"canControlPlayback"`
+	CanReorderQueue    bool `json:"canReorderQueue"`
+	CanChangeVolume    bool `json:"canChangeVolume"`
 }
 
 // SessionParticipant mirrors participant schema.

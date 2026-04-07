@@ -11,11 +11,18 @@ export interface SessionParticipant {
   muted?: boolean;
 }
 
+export interface SessionPermissions {
+  canControlPlayback: boolean;
+  canReorderQueue: boolean;
+  canChangeVolume: boolean;
+}
+
 export interface SessionSnapshot {
   jamId: string;
   status: string;
   hostUserId: string;
   participants: SessionParticipant[];
+  permissions?: SessionPermissions;
   sessionVersion: number;
   endCause?: string;
   endedBy?: string;

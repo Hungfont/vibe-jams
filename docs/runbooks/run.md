@@ -364,7 +364,7 @@ Validation evidence:
 
 Steps:
 1. Host sends moderation command through frontend API routes: `POST /api/jam/{jamId}/moderation/mute` or `POST /api/jam/{jamId}/moderation/kick`.
-2. Frontend route validates auth claims and forwards command to jam-service moderation endpoints.
+2. Frontend route validates auth claims and forwards command through `api-gateway -> api-service` delegated jam route.
 3. jam-service validates host ownership and applies moderation transition:
 	- mute: mark target participant as `muted=true`
 	- kick: remove target participant from active participants
@@ -384,13 +384,66 @@ Edge cases:
 2. Host cannot moderate invalid target identities (for example: missing participant or host self) and receives deterministic request/domain error mapping.
 3. Moderation topic events with stale aggregate versions are suppressed by fanout versioning.
 
+### Flow 17: Centralized Policy AuthZ Guard for Moderation and Permission (ES-P2-004)
+
+Steps:
+1. api-gateway validates token and injects normalized identity headers (`X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope`).
+2. api-service delegated jam policy route performs host-only authorization pre-check by loading jam session state and comparing `X-Auth-UserId` to `session.hostUserId`.
+3. For host-only policy commands invoked by non-host actors, api-service fails fast with deterministic `403 host_only` and does not proxy command to jam-service.
+4. For host actors, api-service forwards policy command to jam-service and command business side effects proceed normally.
+5. jam-service host-only guard remains active as defense-in-depth for direct/internal paths that bypass delegated api-service route.
+
+Expected outcome:
+1. Non-host actors cannot execute delegated host-only moderation or permission policy actions.
+2. Denied host-only commands are rejected upstream in api-service before downstream mutation paths.
+3. Host commands continue to reach jam-service and preserve existing moderation behavior.
+4. jam-service still rejects non-host commands on direct/internal path access.
+
+Edge cases:
+1. Missing or invalid gateway identity headers fail authorization with deterministic unauthorized semantics.
+2. Jam state dependency timeout/unavailable during pre-check maps to deterministic dependency-unavailable semantics.
+3. Actor not present in participant registry is treated as non-host and denied host-only policy commands.
+
+Validation evidence:
+1. `cd backend/api-service && go test ./...`
+2. `cd backend/api-service && go test ./internal/bff -run TestProxyHandler_ModerationRoute_NonHostDeniedAtAPIService -count=1`
+3. `cd backend/api-service && go test ./internal/bff -run TestProxyHandler_ModerationRoute_HostForwardedByAPIService -count=1`
+4. `cd backend/jam-service && go test ./internal/service -run TestModerationNonHostDeniedFastWithHostOnlyAndDeniedAudit -count=1`
+
 Validation evidence:
 1. `cd backend/jam-service && go test ./... -count=1`
 2. `cd backend/jam-service && go test ./internal/handler -run TestModerationEndpointsAndBlockedQueueCommand -count=1`
 3. `cd backend/jam-service && go test ./internal/service -run TestModerationPublishesAuditEvent -count=1`
 4. `cd backend/rt-gateway && go test ./... -count=1`
 5. `cd backend/rt-gateway && go test ./internal/server -run TestModerationTopicInvokesHookAndFansOut -count=1`
-6. `cd frontend && npm test -- jam-room-client.test.tsx`
+11. `cd frontend && bun run test -- src/components/jam/jam-room-client.test.tsx`
+
+### Flow 18: Permission Projection and Permission-Aware Command Gating (ES-P2-001)
+
+Steps:
+1. Host queries and updates guest permission projection via `GET/POST /api/jam/{jamId}/permissions`.
+2. Frontend route validates auth claims and forwards through `api-gateway -> api-service (BFF) -> jam-service`.
+3. api-service enforces centralized permission-aware prechecks before forwarding protected guest playback and queue reorder paths.
+4. jam-service persists permission projection updates in session state and durable store.
+5. Accepted permission updates publish `jam.permission.updated` envelopes to Kafka topic `jam.permission.events`.
+6. rt-gateway consumes permission topic records and broadcasts realtime updates to room subscribers.
+
+Expected outcome:
+1. Guest playback and reorder commands are rejected deterministically when projection flags are disabled.
+2. Enabling projection flags allows protected guest commands without changing host ownership semantics.
+3. Rejected permission updates do not mutate state and do not publish permission events.
+4. Realtime subscribers receive permission updates without requiring page reload.
+
+Edge cases:
+1. Empty or invalid permission update payload returns deterministic `400 invalid_input`.
+2. Non-host permission update attempts are denied upstream with deterministic `403 host_only` or `403 permission_denied` semantics.
+3. Permission event fanout remains isolated to active room subscribers.
+
+Validation evidence:
+1. `cd backend/jam-service && go test ./...`
+2. `cd backend/api-service && go test ./...`
+3. `cd backend/rt-gateway && go test ./internal/server -run TestPermissionTopicFansOutToSubscribers -count=1`
+4. `cd frontend && bun run test -- src/components/jam/jam-room-client.test.tsx src/app/api/jam/[jamId]/permissions/route.test.ts`
 
 ### Flow 12: Frontend Gateway-Aligned Auth Boundary and Cookie Session Flow
 

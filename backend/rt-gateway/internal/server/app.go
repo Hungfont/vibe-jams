@@ -83,7 +83,8 @@ func (a *App) StartConsumer(ctx context.Context) error {
 
 	return a.consumer.Start(ctx, func(consumeCtx context.Context, record gatewaykafka.Record) error {
 		isModerationEvent := record.Topic == a.cfg.ModerationTopic
-		if record.Topic != a.cfg.QueueTopic && record.Topic != a.cfg.PlaybackTopic && !isModerationEvent {
+		isPermissionEvent := record.Topic == a.cfg.PermissionTopic
+		if record.Topic != a.cfg.QueueTopic && record.Topic != a.cfg.PlaybackTopic && !isModerationEvent && !isPermissionEvent {
 			return nil
 		}
 

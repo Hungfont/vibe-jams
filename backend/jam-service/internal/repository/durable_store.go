@@ -24,6 +24,7 @@ type persistedJamQueueState struct {
 	Status            model.SessionStatus            `json:"status"`
 	HostUserID        string                         `json:"hostUserId"`
 	Participants      map[string]model.SessionRole   `json:"participants"`
+	Permissions       model.SessionPermissions       `json:"permissions"`
 	MutedUsers        map[string]bool                `json:"mutedUsers"`
 	KickedUsers       map[string]bool                `json:"kickedUsers"`
 	EndCause          string                         `json:"endCause"`
@@ -78,6 +79,7 @@ func (r *RedisQueueRepository) loadDurableStateLocked() error {
 			status:            state.Status,
 			hostUserID:        state.HostUserID,
 			participants:      participants,
+			permissions:       state.Permissions,
 			mutedUsers:        mutedUsers,
 			kickedUsers:       kickedUsers,
 			endCause:          state.EndCause,
@@ -128,6 +130,7 @@ func (r *RedisQueueRepository) saveDurableStateLocked() error {
 			Status:            state.status,
 			HostUserID:        state.hostUserID,
 			Participants:      participants,
+			Permissions:       state.permissions,
 			MutedUsers:        mutedUsers,
 			KickedUsers:       kickedUsers,
 			EndCause:          state.endCause,

@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	jamauthz "video-streaming/backend/jams/internal/authz"
 	"video-streaming/backend/jams/internal/model"
 	"video-streaming/backend/jams/internal/repository"
+	sharedauth "video-streaming/backend/shared/auth"
 	sharedcatalog "video-streaming/backend/shared/catalog"
 )
 
@@ -22,6 +25,10 @@ var (
 	ErrTrackUnavailable = errors.New("track unavailable")
 	// ErrModerationBlocked indicates actor is blocked by moderation policy.
 	ErrModerationBlocked = errors.New("moderation blocked")
+	// ErrHostOnly indicates actor is not authorized for host-only policy command.
+	ErrHostOnly = errors.New("host only")
+	// ErrPermissionDenied indicates actor lacks capability for protected command.
+	ErrPermissionDenied = errors.New("permission denied")
 )
 
 // QueueRepository abstracts queue persistence for service business logic.
@@ -32,6 +39,8 @@ type QueueRepository interface {
 	EndSession(jamID string, actorUserID string) (model.SessionSnapshot, error)
 	SessionSnapshot(jamID string) (model.SessionSnapshot, error)
 	EnsureSessionActive(jamID string) error
+	Permissions(jamID string) (model.SessionPermissions, error)
+	UpdatePermissions(jamID string, actorUserID string, req model.PermissionUpdateRequest) (model.SessionSnapshot, bool, error)
 
 	Add(jamID string, req model.AddQueueItemRequest) (model.QueueSnapshot, bool, error)
 	Remove(jamID string, expectedVersion int64, itemID string, actorUserID string) (model.QueueSnapshot, error)
@@ -47,6 +56,7 @@ type EventProducer interface {
 	PublishQueueEvent(ctx context.Context, sessionID string, aggregateVersion int64, eventType string, payload any) error
 	PublishSessionEvent(ctx context.Context, sessionID string, aggregateVersion int64, eventType string, payload any) error
 	PublishModerationEvent(ctx context.Context, sessionID string, aggregateVersion int64, eventType string, payload any) error
+	PublishPermissionEvent(ctx context.Context, sessionID string, aggregateVersion int64, eventType string, payload any) error
 }
 
 // Service orchestrates queue command validation and mutation behavior.
@@ -55,20 +65,31 @@ type Service struct {
 	events                   EventProducer
 	catalogValidator         sharedcatalog.Validator
 	catalogValidationEnabled bool
+	policyGuard              jamauthz.Guard
 }
 
 // New builds a queue service instance with injected repository dependency.
 func New(repo QueueRepository, events EventProducer) *Service {
-	return NewWithCatalogValidator(repo, events, nil, false)
+	return NewWithCatalogValidatorAndGuard(repo, events, nil, false, nil)
 }
 
 // NewWithCatalogValidator builds a queue service with optional catalog pre-checks.
 func NewWithCatalogValidator(repo QueueRepository, events EventProducer, catalogValidator sharedcatalog.Validator, enabled bool) *Service {
+	return NewWithCatalogValidatorAndGuard(repo, events, catalogValidator, enabled, nil)
+}
+
+// NewWithCatalogValidatorAndGuard builds queue service with optional catalog and policy guard dependencies.
+func NewWithCatalogValidatorAndGuard(repo QueueRepository, events EventProducer, catalogValidator sharedcatalog.Validator, enabled bool, policyGuard jamauthz.Guard) *Service {
+	if policyGuard == nil {
+		policyGuard = jamauthz.NewHostGuestGuard()
+	}
+
 	return &Service{
 		repo:                     repo,
 		events:                   events,
 		catalogValidator:         catalogValidator,
 		catalogValidationEnabled: enabled,
+		policyGuard:              policyGuard,
 	}
 }
 
@@ -255,6 +276,9 @@ func (s *Service) Reorder(jamID string, req model.ReorderQueueRequest) (model.Qu
 		if errors.Is(err, repository.ErrModerationBlocked) {
 			return model.QueueSnapshot{}, ErrModerationBlocked
 		}
+		if errors.Is(err, repository.ErrPermissionDenied) {
+			return model.QueueSnapshot{}, ErrPermissionDenied
+		}
 		return model.QueueSnapshot{}, err
 	}
 	if err := s.publishMutationEvents(jamID, snapshot.QueueVersion, "jam.queue.reordered", map[string]any{
@@ -303,7 +327,7 @@ func IsNotFound(err error) bool {
 
 // IsHostOnly reports whether operation requires host ownership.
 func IsHostOnly(err error) bool {
-	return errors.Is(err, repository.ErrHostOwnershipRequired)
+	return errors.Is(err, ErrHostOnly) || errors.Is(err, repository.ErrHostOwnershipRequired)
 }
 
 // IsSessionEnded reports whether operation was blocked by ended state.
@@ -316,11 +340,17 @@ func IsModerationBlocked(err error) bool {
 	return errors.Is(err, ErrModerationBlocked) || errors.Is(err, repository.ErrModerationBlocked)
 }
 
+// IsPermissionDenied reports whether actor lacks projected command permission.
+func IsPermissionDenied(err error) bool {
+	return errors.Is(err, ErrPermissionDenied) || errors.Is(err, repository.ErrPermissionDenied)
+}
+
 // IsInvalidRequest reports whether an error is a validation failure.
 func IsInvalidRequest(err error) bool {
 	return errors.Is(err, ErrInvalidRequest) ||
 		errors.Is(err, repository.ErrIdempotencyKeyRequired) ||
-		errors.Is(err, repository.ErrModerationTargetInvalid)
+		errors.Is(err, repository.ErrModerationTargetInvalid) ||
+		errors.Is(err, repository.ErrPermissionUpdateRequired)
 }
 
 // IsTrackNotFound reports whether track lookup failed with not-found semantics.
@@ -348,23 +378,170 @@ func (s *Service) publishMutationEvents(jamID string, queueVersion int64, queueE
 	})
 }
 
+// Permissions returns current session permission projection.
+func (s *Service) Permissions(jamID string) (model.SessionPermissions, error) {
+	if strings.TrimSpace(jamID) == "" {
+		return model.SessionPermissions{}, fmt.Errorf("%w: jamId is required", ErrInvalidRequest)
+	}
+
+	return s.repo.Permissions(jamID)
+}
+
+// UpdatePermissions applies host-managed permission projection updates.
+func (s *Service) UpdatePermissions(ctx context.Context, jamID string, claims sharedauth.Claims, req model.PermissionUpdateRequest) (model.SessionSnapshot, error) {
+	if strings.TrimSpace(jamID) == "" || strings.TrimSpace(claims.UserID) == "" {
+		return model.SessionSnapshot{}, fmt.Errorf("%w: jamId and actor user are required", ErrInvalidRequest)
+	}
+	if req.CanControlPlayback == nil && req.CanReorderQueue == nil && req.CanChangeVolume == nil {
+		return model.SessionSnapshot{}, fmt.Errorf("%w: permission update required", ErrInvalidRequest)
+	}
+
+	if req.CanControlPlayback != nil {
+		if _, err := s.authorizePolicyCommand(ctx, jamID, claims, jamauthz.CommandPermissionPlayback, ""); err != nil {
+			return model.SessionSnapshot{}, err
+		}
+	}
+	if req.CanReorderQueue != nil {
+		if _, err := s.authorizePolicyCommand(ctx, jamID, claims, jamauthz.CommandPermissionReorder, ""); err != nil {
+			return model.SessionSnapshot{}, err
+		}
+	}
+	if req.CanChangeVolume != nil {
+		if _, err := s.authorizePolicyCommand(ctx, jamID, claims, jamauthz.CommandPermissionVolume, ""); err != nil {
+			return model.SessionSnapshot{}, err
+		}
+	}
+
+	snapshot, changed, err := s.repo.UpdatePermissions(jamID, claims.UserID, req)
+	if err != nil {
+		if errors.Is(err, repository.ErrHostOwnershipRequired) {
+			return model.SessionSnapshot{}, ErrHostOnly
+		}
+		return model.SessionSnapshot{}, err
+	}
+
+	if changed && s.events != nil {
+		if err := s.events.PublishPermissionEvent(ctx, jamID, snapshot.SessionVersion, "jam.permission.updated", map[string]any{
+			"actorUserId":        claims.UserID,
+			"actorPlan":          claims.Plan,
+			"actorScope":         claims.Scope,
+			"canControlPlayback": snapshot.Permissions.CanControlPlayback,
+			"canReorderQueue":    snapshot.Permissions.CanReorderQueue,
+			"canChangeVolume":    snapshot.Permissions.CanChangeVolume,
+			"occurredAt":         time.Now().UTC(),
+		}); err != nil {
+			return model.SessionSnapshot{}, err
+		}
+	}
+
+	return snapshot, nil
+}
+
+// AuthorizePermissionCommand evaluates centralized host-or-guest policy authorization for permission commands.
+func (s *Service) AuthorizePermissionCommand(ctx context.Context, jamID string, claims sharedauth.Claims, command string) error {
+	policyCommand, err := parsePermissionCommand(command)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.authorizePolicyCommand(ctx, jamID, claims, policyCommand, "")
+	return err
+}
+
+func parsePermissionCommand(command string) (jamauthz.PolicyCommand, error) {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "cancontrolplayback", "control_playback", "permission.control_playback":
+		return jamauthz.CommandPermissionPlayback, nil
+	case "canreorderqueue", "reorder_queue", "permission.reorder_queue":
+		return jamauthz.CommandPermissionReorder, nil
+	case "canchangevolume", "change_volume", "permission.change_volume":
+		return jamauthz.CommandPermissionVolume, nil
+	default:
+		return "", fmt.Errorf("%w: unsupported permission command %q", ErrInvalidRequest, command)
+	}
+}
+
+func (s *Service) authorizePolicyCommand(ctx context.Context, jamID string, claims sharedauth.Claims, command jamauthz.PolicyCommand, targetUserID string) (model.SessionSnapshot, error) {
+	if strings.TrimSpace(jamID) == "" || strings.TrimSpace(claims.UserID) == "" {
+		return model.SessionSnapshot{}, fmt.Errorf("%w: jamId and actor user are required", ErrInvalidRequest)
+	}
+	if err := sharedauth.ValidateClaims(claims); err != nil {
+		return model.SessionSnapshot{}, fmt.Errorf("%w: invalid auth claims", ErrInvalidRequest)
+	}
+
+	session, err := s.repo.SessionSnapshot(jamID)
+	if err != nil {
+		return model.SessionSnapshot{}, err
+	}
+
+	decision := s.policyGuard.Authorize(ctx, session, jamauthz.DecisionContext{
+		JamID:        jamID,
+		Claims:       claims,
+		Command:      command,
+		TargetUserID: targetUserID,
+	})
+
+	if err := s.publishPolicyAuthorizationAudit(ctx, session, claims, command, targetUserID, decision); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+
+	if !decision.Allowed {
+		return model.SessionSnapshot{}, ErrHostOnly
+	}
+
+	return session, nil
+}
+
+func (s *Service) publishPolicyAuthorizationAudit(ctx context.Context, session model.SessionSnapshot, claims sharedauth.Claims, command jamauthz.PolicyCommand, targetUserID string, decision jamauthz.Decision) error {
+	if s.events == nil {
+		return nil
+	}
+
+	outcome := "denied"
+	if decision.Allowed {
+		outcome = "accepted"
+	}
+
+	return s.events.PublishSessionEvent(ctx, session.JamID, session.SessionVersion, "jam.policy.authorization.decided", map[string]any{
+		"command":      command,
+		"outcome":      outcome,
+		"reason":       decision.Reason,
+		"actorUserId":  claims.UserID,
+		"actorPlan":    claims.Plan,
+		"actorScope":   claims.Scope,
+		"actorRole":    decision.ActorRole,
+		"targetUserId": targetUserID,
+		"occurredAt":   time.Now().UTC(),
+	})
+}
+
 // MuteParticipant marks one participant as muted and emits moderation audit event.
-func (s *Service) MuteParticipant(ctx context.Context, jamID string, actorUserID string, req model.ModerationCommandRequest) (model.SessionSnapshot, error) {
-	if jamID == "" || actorUserID == "" || req.TargetUserID == "" {
+func (s *Service) MuteParticipant(ctx context.Context, jamID string, claims sharedauth.Claims, req model.ModerationCommandRequest) (model.SessionSnapshot, error) {
+	if jamID == "" || claims.UserID == "" || req.TargetUserID == "" {
 		return model.SessionSnapshot{}, fmt.Errorf("%w: jamId, actor user and target user are required", ErrInvalidRequest)
 	}
 
-	snapshot, err := s.repo.MuteParticipant(jamID, actorUserID, req)
+	if _, err := s.authorizePolicyCommand(ctx, jamID, claims, jamauthz.CommandModerationMute, req.TargetUserID); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+
+	snapshot, err := s.repo.MuteParticipant(jamID, claims.UserID, req)
 	if err != nil {
+		if errors.Is(err, repository.ErrHostOwnershipRequired) {
+			return model.SessionSnapshot{}, ErrHostOnly
+		}
 		return model.SessionSnapshot{}, err
 	}
 
 	if s.events != nil {
 		if err := s.events.PublishModerationEvent(ctx, jamID, snapshot.SessionVersion, "jam.moderation.muted", map[string]any{
 			"action":       "mute",
-			"actorUserId":  actorUserID,
+			"actorUserId":  claims.UserID,
+			"actorPlan":    claims.Plan,
+			"actorScope":   claims.Scope,
 			"targetUserId": req.TargetUserID,
 			"reason":       req.Reason,
+			"outcome":      "accepted",
 			"occurredAt":   time.Now().UTC(),
 		}); err != nil {
 			return model.SessionSnapshot{}, err
@@ -375,22 +552,32 @@ func (s *Service) MuteParticipant(ctx context.Context, jamID string, actorUserID
 }
 
 // KickParticipant removes one participant and emits moderation audit event.
-func (s *Service) KickParticipant(ctx context.Context, jamID string, actorUserID string, req model.ModerationCommandRequest) (model.SessionSnapshot, error) {
-	if jamID == "" || actorUserID == "" || req.TargetUserID == "" {
+func (s *Service) KickParticipant(ctx context.Context, jamID string, claims sharedauth.Claims, req model.ModerationCommandRequest) (model.SessionSnapshot, error) {
+	if jamID == "" || claims.UserID == "" || req.TargetUserID == "" {
 		return model.SessionSnapshot{}, fmt.Errorf("%w: jamId, actor user and target user are required", ErrInvalidRequest)
 	}
 
-	snapshot, err := s.repo.KickParticipant(jamID, actorUserID, req)
+	if _, err := s.authorizePolicyCommand(ctx, jamID, claims, jamauthz.CommandModerationKick, req.TargetUserID); err != nil {
+		return model.SessionSnapshot{}, err
+	}
+
+	snapshot, err := s.repo.KickParticipant(jamID, claims.UserID, req)
 	if err != nil {
+		if errors.Is(err, repository.ErrHostOwnershipRequired) {
+			return model.SessionSnapshot{}, ErrHostOnly
+		}
 		return model.SessionSnapshot{}, err
 	}
 
 	if s.events != nil {
 		if err := s.events.PublishModerationEvent(ctx, jamID, snapshot.SessionVersion, "jam.moderation.kicked", map[string]any{
 			"action":       "kick",
-			"actorUserId":  actorUserID,
+			"actorUserId":  claims.UserID,
+			"actorPlan":    claims.Plan,
+			"actorScope":   claims.Scope,
 			"targetUserId": req.TargetUserID,
 			"reason":       req.Reason,
+			"outcome":      "accepted",
 			"occurredAt":   time.Now().UTC(),
 		}); err != nil {
 			return model.SessionSnapshot{}, err
