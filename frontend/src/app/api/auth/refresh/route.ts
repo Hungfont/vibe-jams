@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await backendJson<unknown>({
-    service: "auth",
+    service: "gateway",
     path: "/v1/auth/refresh",
     method: "POST",
     body: { refreshToken },

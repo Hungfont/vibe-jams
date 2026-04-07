@@ -213,36 +213,49 @@ Validation evidence:
 9. `cd backend/playback-service && go test ./internal/repository -run TestDurablePlaybackRepository_ConcurrentCommandsRemainConsistent -count=1`
 10. `cd backend/rt-gateway && go test ./internal/server -run TestWebsocketFanout_EndToEndViaConsumerLoop -count=1`
 
-### Flow 9: API-Service BFF Orchestration Entrypoint (ES-P1-009)
+### Flow 9: API-Gateway AuthN + API-Service BFF Orchestration
+
+**Entry point**: `api-gateway` (port 8085) is the sole public ingress. Direct external calls to `api-service` are blocked at the network layer.
 
 Steps:
-1. Send `POST /v1/bff/mvp/sessions/{sessionId}/orchestration` with bearer token and optional `trackId` payload.
-2. Validate and normalize auth claims through auth-service before any downstream orchestration work.
-3. Fetch jam session state from jam-service as a required dependency.
-4. If `trackId` is present, resolve catalog metadata through catalog-service as optional enrichment.
-5. Reject request with `400 invalid_input` when `playbackCommand` appears in orchestration payload.
-6. Aggregate dependency outputs into one deterministic BFF envelope with dependency status fields.
+1. Client sends `POST /v1/bff/mvp/sessions/{sessionId}/orchestration` with `Authorization: Bearer <token>` to api-gateway.
+2. api-gateway strips any client-supplied `X-Auth-*` headers (spoof prevention).
+3. api-gateway calls `POST /internal/v1/auth/validate` on auth-service with the bearer token; applies `GATEWAY_TIMEOUT_AUTH_MS` timeout.
+4. On validate success, api-gateway checks `sessionState == "valid"`; strips `Authorization`; injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` into the forwarded request.
+5. api-gateway proxies the request to api-service.
+6. api-service reads identity from `X-Auth-*` headers (does not call auth-service); rejects if `X-Auth-UserId` is absent or `sessionState` is not `valid`.
+7. api-service fetches jam session state from jam-service as a required dependency, forwarding `X-Auth-*` headers.
+8. If `trackId` is present, api-service resolves catalog metadata as optional enrichment.
+9. Reject request with `400 invalid_input` when `playbackCommand` appears in orchestration payload.
+10. Aggregate dependency outputs into one deterministic BFF envelope.
 
 Expected outcome:
-1. Successful required dependency path returns `200` with `success=true`, normalized `claims`, jam `sessionState`, and dependency status map.
-2. Required dependency timeout is normalized to `503` with `error.code=dependency_timeout` and failing dependency name.
-3. Required dependency unavailable path is normalized to `503` with `error.code=dependency_unavailable` and failing dependency name.
-4. Optional catalog failure keeps `200` and sets `data.partial=true`, adds issue entries, and marks `catalog` as `degraded`.
+1. Successful path returns `200` with `success=true`, normalized `claims` (from `X-Auth-*` headers), jam `sessionState`, and dependency status map.
+2. Missing/invalid token → api-gateway returns `401 invalid_token` before forwarding.
+3. auth-service timeout → api-gateway returns `503 auth_service_unavailable`.
+4. Revoked session (`sessionState != valid`) → api-gateway returns `401 invalid_token`.
+5. Required dependency (jam) timeout → api-service returns `503 dependency_timeout`.
+6. Optional catalog failure → api-service returns `200` with `data.partial=true`.
 
 Edge cases:
-1. Missing `Authorization` header returns `401 unauthorized` before downstream fan-out.
-2. Empty `sessionId` path parameter returns `400 invalid_input`.
-3. Invalid claim contract from auth validation is treated as `401 unauthorized`.
-4. `playbackCommand` in orchestration body returns `400 invalid_input` and no playback mutation is executed.
+1. Client-injected `X-Auth-UserId` is stripped by api-gateway and replaced with validated value.
+2. Request reaching api-service without `X-Auth-UserId` (gateway bypassed) returns `401 unauthorized`.
+3. Empty `sessionId` path parameter returns `400 invalid_input`.
+4. `playbackCommand` in orchestration body returns `400 invalid_input`.
+
+Startup order:
+1. `auth-service` (port 8081)
+2. `api-service` (port 8084, internal only)
+3. `api-gateway` (port 8085, public)
 
 Validation evidence:
-1. `cd backend/api-service && go test ./...`
-2. `cd backend/api-service && go test ./internal/bff -run TestOrchestrationSuccessAcrossDependencies -count=1`
-3. `cd backend/api-service && go test ./internal/bff -run TestOrchestrationTimeoutNormalizedForRequiredDependency -count=1`
-4. `cd backend/api-service && go test ./internal/bff -run TestOrchestrationOptionalFailureReturnsPartial -count=1`
-5. `cd backend/api-service && go test ./internal/bff -run TestOrchestrationRejectsPlaybackCommandPayload -count=1`
-6. `cd backend/api-service && go test ./internal/bff -run TestHTTPAuthClientValidateBearerToken -count=1`
-7. `cd backend/api-service && go test ./internal/bff -run TestHTTPCatalogClientLookupTrack -count=1`
+1. `go test video-streaming/backend/api-gateway/...`
+2. `go test video-streaming/backend/api-service/...`
+3. `go test video-streaming/backend/api-gateway/internal/gateway -run TestAuthnMiddleware -count=1`
+4. `go test video-streaming/backend/api-service/internal/bff -run TestOrchestrationSuccessAcrossDependencies -count=1`
+5. `go test video-streaming/backend/api-service/internal/bff -run TestOrchestrationRejectsMissingIdentityHeaders -count=1`
+6. `go test video-streaming/backend/api-service/internal/bff -run TestOrchestrationRejectsPlaybackCommandPayload -count=1`
+7. `go test video-streaming/backend/api-service/internal/bff -run TestHTTPCatalogClientLookupTrack -count=1`
 
 ### Flow 10: Frontend Phase 1 Jam UI Routing and API Boundary
 
@@ -300,16 +313,17 @@ Validation evidence:
 5. `cd backend/rt-gateway && go test ./internal/server -run TestModerationTopicInvokesHookAndFansOut -count=1`
 6. `cd frontend && npm test -- jam-room-client.test.tsx`
 
-### Flow 12: Auth Login, Refresh Rotation, Logout, and Frontend Cookie Boundary
+### Flow 12: Frontend Gateway-Aligned Auth Boundary and Cookie Session Flow
 
 Steps:
 1. User submits credential payload through frontend route `POST /api/auth/login`.
-2. Frontend route validates request with Zod and forwards to auth-service `POST /v1/auth/login`.
+2. Frontend route validates request with Zod and forwards to api-gateway `POST /v1/auth/login`.
 3. Frontend sets `auth_token` and `refresh_token` as HttpOnly cookies, plus `csrf_token` cookie for state-changing auth calls.
-4. Frontend refresh path `POST /api/auth/refresh` requires `X-CSRF-Token` header matching `csrf_token` cookie and forwards refresh token to auth-service.
-5. auth-service rotates refresh token family; frontend rewrites cookies with rotated token pair.
-6. Frontend logout path `POST /api/auth/logout` also enforces CSRF match, revokes upstream refresh session, and clears all auth cookies.
-7. Frontend `GET /api/auth/me` returns normalized claims from auth-service while preserving frontend API boundary semantics.
+4. Frontend refresh path `POST /api/auth/refresh` requires `X-CSRF-Token` header matching `csrf_token` cookie and forwards refresh token to api-gateway `POST /v1/auth/refresh`.
+5. api-gateway forwards auth public lifecycle calls to auth-service; frontend rewrites cookies with rotated token pair.
+6. Frontend logout path `POST /api/auth/logout` enforces CSRF match, forwards to api-gateway `POST /v1/auth/logout`, and clears all auth cookies.
+7. Frontend `GET /api/auth/me` forwards to api-gateway `GET /v1/auth/me` and returns normalized claims while preserving frontend API boundary semantics.
+8. Jam SSR bootstrap route `POST /api/bff/jam/{jamId}/orchestration` forwards to api-gateway `POST /v1/bff/mvp/sessions/{jamId}/orchestration`.
 
 Expected outcome:
 1. Valid login returns claims envelope and cookie-backed auth context.
@@ -323,10 +337,11 @@ Edge cases:
 1. Upstream auth response shape drift is normalized to `502 dependency_invalid_response`.
 2. Missing refresh token context returns deterministic `401 unauthorized`.
 3. Refresh token replay is enforced upstream as unauthorized/reuse-detected semantics and returned through frontend envelope mapping.
+4. Missing auth context on `GET /api/auth/me` returns deterministic `401 unauthorized` without upstream call.
 
 Validation evidence:
 1. `cd backend/auth-service && go test ./... -count=1`
-2. `cd frontend && bun run test -- src/components/auth/login-form.test.tsx src/app/api/auth/login/route.test.ts src/app/api/auth/refresh/route.test.ts`
+2. `cd frontend && bun run test -- src/app/api/auth/login/route.test.ts src/app/api/auth/refresh/route.test.ts src/app/api/auth/logout/route.test.ts src/app/api/auth/me/route.test.ts src/app/api/bff/jam/[jamId]/orchestration/route.test.ts`
 3. `cd frontend && bun run lint`
 4. `cd frontend && bun run build`
 

@@ -105,6 +105,13 @@ describe("POST /api/bff/jam/[jamId]/orchestration", () => {
     expect(payload.data?.claims?.userId).toBe("host-1");
     expect(payload.data?.sessionState?.session?.jamId).toBe("jam_1");
     expect(payload.data?.success).toBeUndefined();
+    expect(mocks.backendJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        service: "gateway",
+        path: "/v1/bff/mvp/sessions/jam_1/orchestration",
+        method: "POST",
+      }),
+    );
   });
 
   it("returns 502 when upstream payload shape is invalid", async () => {

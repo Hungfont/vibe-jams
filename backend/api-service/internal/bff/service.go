@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
+
+	sharedauth "video-streaming/backend/shared/auth"
 )
 
 // Service orchestrates MVP BFF flows.
 type Service struct {
-	auth           AuthClient
 	jam            JamClient
 	playback       PlaybackClient
 	catalog        CatalogClient
@@ -17,32 +19,24 @@ type Service struct {
 }
 
 // NewService builds orchestration service.
-func NewService(auth AuthClient, jam JamClient, playback PlaybackClient, catalog CatalogClient, featureEnabled bool) *Service {
-	return &Service{auth: auth, jam: jam, playback: playback, catalog: catalog, featureEnabled: featureEnabled}
+func NewService(jam JamClient, playback PlaybackClient, catalog CatalogClient, featureEnabled bool) *Service {
+	return &Service{jam: jam, playback: playback, catalog: catalog, featureEnabled: featureEnabled}
 }
 
-// Orchestrate executes read aggregation across auth, jam, and optional catalog for one jam session.
-func (s *Service) Orchestrate(ctx context.Context, jamID string, authHeader string, req OrchestrateRequest) (OrchestrateData, *ErrorBody, int) {
+// Orchestrate executes read aggregation across jam and optional catalog for one jam session.
+// Identity is sourced from gateway-forwarded X-Auth-* headers (xAuthHeaders).
+func (s *Service) Orchestrate(ctx context.Context, jamID string, claims sharedauth.Claims, xAuthHeaders http.Header, req OrchestrateRequest) (OrchestrateData, *ErrorBody, int) {
 	if !s.featureEnabled {
 		return OrchestrateData{}, &ErrorBody{Code: "service_unavailable", Message: "bff orchestration is disabled"}, 503
 	}
 	if strings.TrimSpace(jamID) == "" {
 		return OrchestrateData{}, &ErrorBody{Code: "invalid_input", Message: "sessionId is required"}, 400
 	}
-	if strings.TrimSpace(authHeader) == "" {
-		return OrchestrateData{}, &ErrorBody{Code: "unauthorized", Message: "missing authorization"}, 401
-	}
 	if req.PlaybackCommand != nil {
 		return OrchestrateData{}, &ErrorBody{Code: "invalid_input", Message: "playbackCommand is not supported on orchestration endpoint"}, 400
 	}
 
-	claims, err := s.auth.ValidateBearerToken(ctx, authHeader)
-	if err != nil {
-		errBody, status := s.requiredDependencyError("auth", err)
-		return OrchestrateData{}, errBody, status
-	}
-
-	state, err := s.jam.SessionState(ctx, jamID, authHeader)
+	state, err := s.jam.SessionState(ctx, jamID, xAuthHeaders)
 	if err != nil {
 		errBody, status := s.requiredDependencyError("jam", err)
 		return OrchestrateData{}, errBody, status
@@ -52,8 +46,7 @@ func (s *Service) Orchestrate(ctx context.Context, jamID string, authHeader stri
 		Claims:       claims,
 		SessionState: state,
 		DependencyStatuses: map[string]string{
-			"auth": "ok",
-			"jam":  "ok",
+			"jam": "ok",
 		},
 	}
 

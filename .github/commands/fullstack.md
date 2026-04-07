@@ -11,6 +11,8 @@ Run a fullstack OpenSpec-driven workflow from requirement review to integrated i
 
 **IMPORTANT**: Do NOT guess or auto-select a change. Always let the user choose.
 
+**Primary path (always)**: `/opsx-propose` -> approval gate -> `/opsx:apply` (then `/opsx:archive` when complete).
+
 **Purpose**
 
 - Review feature requirements against current OpenSpec artifacts.
@@ -120,7 +122,7 @@ Announce active context and loaded sources before each phase.
          - User approval status is explicitly `Approved`.
       - If approval status is not `Approved`, do not continue to apply.
 
-    - Prefer `/opsx:apply <name>` as the default execution path.
+   - Continue only on the primary path after approval: `/opsx:apply <name>`.
     - If slash-command path is unavailable or requires lower-level recovery, use apply instructions directly:
      ```bash
      openspec instructions apply --change "<name>" --json
@@ -176,7 +178,8 @@ Announce active context and loaded sources before each phase.
 ## Guardrails
 
 - Never skip OpenSpec update when requirement changes are discovered.
-- Default execution preference is slash commands: `/opsx-propose` then `/opsx:apply` by branch.
+- Primary path is always: `/opsx-propose` -> approval gate -> `/opsx:apply`.
+- After all tasks are complete, suggest `/opsx:archive`.
 - Use raw OpenSpec CLI as fallback only when slash-command path is unavailable or blocked.
 - Mandatory approval gate: explicit user approval is required before `/opsx:apply`, immediately after propose output is presented.
 - Hard stop rule: if approval is pending or concerns remain, continue proposal refinement and do not enter apply.
@@ -197,7 +200,7 @@ Announce active context and loaded sources before each phase.
 **Change:** <name>
 **OpenSpec Action:** Updated existing artifacts | Created new change
 **Coverage Result:** A | B | C
-**Primary Path:** /opsx-propose + /opsx:apply | CLI fallback
+**Primary Path:** /opsx-propose -> approval gate -> /opsx:apply (then /opsx:archive when complete)
 **Approval Status:** Approved | Pending concerns
 **Approval Checkpoint:** Requested after propose | Not requested (invalid)
 

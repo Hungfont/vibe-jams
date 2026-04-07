@@ -13,12 +13,11 @@ func NewRouter(cfg config.Config) (http.Handler, error) {
 		return nil, err
 	}
 
-	authClient := NewHTTPAuthClient(cfg.AuthServiceURL, cfg.AuthTimeout)
 	jamClient := NewHTTPJamClient(cfg.JamServiceURL, cfg.JamTimeout)
 	playbackClient := NewHTTPPlaybackClient(cfg.PlaybackServiceURL, cfg.PlaybackTimeout)
 	catalogClient := NewHTTPCatalogClient(cfg.CatalogServiceURL, cfg.CatalogTimeout)
 
-	service := NewService(authClient, jamClient, playbackClient, catalogClient, cfg.FeatureBFFEnabled)
+	service := NewService(jamClient, playbackClient, catalogClient, cfg.FeatureBFFEnabled)
 	handler := NewHandler(service)
 
 	mux := http.NewServeMux()

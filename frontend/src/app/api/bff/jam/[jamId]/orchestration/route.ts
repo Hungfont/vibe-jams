@@ -18,7 +18,7 @@ export async function POST(
   const body = (await request.json().catch(() => ({}))) as unknown;
   const { jamId } = await context.params;
   const result = await backendJson<BffOrchestrationData>({
-    service: "bff",
+    service: "gateway",
     path: `/v1/bff/mvp/sessions/${encodeURIComponent(jamId)}/orchestration`,
     method: "POST",
     body,

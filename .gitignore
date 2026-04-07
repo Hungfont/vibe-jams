@@ -1,3 +1,7 @@
+# Agent config
+.claude
+CLAUDE.MD
+
 # OS / editor
 .DS_Store
 Thumbs.db

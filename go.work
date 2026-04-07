@@ -1,6 +1,7 @@
 go 1.21
 
 use (
+	./backend/api-gateway
 	./backend/api-service
 	./backend/auth-service
 	./backend/catalog-service

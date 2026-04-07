@@ -31,4 +31,4 @@ export function errorEnvelope(code: string, message: string, dependency?: string
   };
 }
 
-export type BackendService = "auth" | "catalog" | "jam" | "playback" | "bff" | "realtime";
+export type BackendService = "gateway" | "auth" | "catalog" | "jam" | "playback" | "bff" | "realtime";

@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await backendJson<unknown>({
-    service: "auth",
+    service: "gateway",
     path: "/v1/auth/logout",
     method: "POST",
     body: { refreshToken },

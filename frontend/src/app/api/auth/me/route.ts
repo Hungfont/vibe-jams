@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   }
 
   const result = await backendJson<unknown>({
-    service: "auth",
+    service: "gateway",
     path: "/v1/auth/me",
     method: "GET",
     authHeader: auth.authHeader,

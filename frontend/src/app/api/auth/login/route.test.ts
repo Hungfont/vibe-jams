@@ -86,5 +86,12 @@ describe("POST /api/auth/login", () => {
     expect(setCookie).toContain("auth_token=");
     expect(setCookie).toContain("refresh_token=");
     expect(setCookie).toContain("csrf_token=");
+    expect(httpMocks.backendJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        service: "gateway",
+        path: "/v1/auth/login",
+        method: "POST",
+      }),
+    );
   });
 });

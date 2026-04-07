@@ -12,75 +12,22 @@ import (
 	"strings"
 	"time"
 
-	sharedauth "video-streaming/backend/shared/auth"
 	sharedcatalog "video-streaming/backend/shared/catalog"
 )
 
-// AuthClient validates bearer token and returns normalized claims.
-type AuthClient interface {
-	ValidateBearerToken(ctx context.Context, authHeader string) (sharedauth.Claims, error)
-}
-
 // JamClient loads jam session state.
 type JamClient interface {
-	SessionState(ctx context.Context, jamID string, authHeader string) (SessionStateSnapshot, error)
+	SessionState(ctx context.Context, jamID string, xAuthHeaders http.Header) (SessionStateSnapshot, error)
 }
 
 // PlaybackClient sends playback commands.
 type PlaybackClient interface {
-	ExecuteCommand(ctx context.Context, jamID string, authHeader string, req PlaybackCommandRequest) (PlaybackCommandAccepted, error)
+	ExecuteCommand(ctx context.Context, jamID string, xAuthHeaders http.Header, req PlaybackCommandRequest) (PlaybackCommandAccepted, error)
 }
 
 // CatalogClient validates track metadata.
 type CatalogClient interface {
 	LookupTrack(ctx context.Context, trackID string) (LookupResponse, error)
-}
-
-// HTTPAuthClient calls auth-service.
-type HTTPAuthClient struct {
-	baseURL string
-	client  *http.Client
-}
-
-// NewHTTPAuthClient builds auth dependency client.
-func NewHTTPAuthClient(baseURL string, timeout time.Duration) *HTTPAuthClient {
-	return &HTTPAuthClient{baseURL: strings.TrimRight(baseURL, "/"), client: &http.Client{Timeout: timeout}}
-}
-
-func (c *HTTPAuthClient) ValidateBearerToken(ctx context.Context, authHeader string) (sharedauth.Claims, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/internal/v1/auth/validate", bytes.NewReader(nil))
-	if err != nil {
-		return sharedauth.Claims{}, fmt.Errorf("build auth request: %w", err)
-	}
-	req.Header.Set("Authorization", strings.TrimSpace(authHeader))
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return sharedauth.Claims{}, fmt.Errorf("%w: %v", classifyTransportError(err), err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		return sharedauth.Claims{}, ErrUnauthorized
-	}
-	if resp.StatusCode >= http.StatusInternalServerError {
-		return sharedauth.Claims{}, ErrDependencyUnavailable
-	}
-	if resp.StatusCode != http.StatusOK {
-		return sharedauth.Claims{}, UpstreamError{StatusCode: resp.StatusCode, Code: "upstream_error", Message: "unexpected auth status"}
-	}
-
-	var claims sharedauth.Claims
-	if err := json.NewDecoder(resp.Body).Decode(&claims); err != nil {
-		return sharedauth.Claims{}, fmt.Errorf("decode claims: %w", err)
-	}
-	if err := sharedauth.ValidateClaims(claims); err != nil {
-		return sharedauth.Claims{}, ErrUnauthorized
-	}
-	if strings.ToLower(strings.TrimSpace(claims.SessionState)) != sharedauth.SessionStateValid {
-		return sharedauth.Claims{}, ErrUnauthorized
-	}
-	return claims, nil
 }
 
 // HTTPJamClient calls jam-service state endpoint.
@@ -94,14 +41,16 @@ func NewHTTPJamClient(baseURL string, timeout time.Duration) *HTTPJamClient {
 	return &HTTPJamClient{baseURL: strings.TrimRight(baseURL, "/"), client: &http.Client{Timeout: timeout}}
 }
 
-func (c *HTTPJamClient) SessionState(ctx context.Context, jamID string, authHeader string) (SessionStateSnapshot, error) {
+func (c *HTTPJamClient) SessionState(ctx context.Context, jamID string, xAuthHeaders http.Header) (SessionStateSnapshot, error) {
 	endpoint := fmt.Sprintf("%s/api/v1/jams/%s/state", c.baseURL, url.PathEscape(jamID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return SessionStateSnapshot{}, fmt.Errorf("build jam state request: %w", err)
 	}
-	if strings.TrimSpace(authHeader) != "" {
-		req.Header.Set("Authorization", authHeader)
+	for k, vs := range xAuthHeaders {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
 	}
 
 	resp, err := c.client.Do(req)
@@ -145,7 +94,7 @@ func NewHTTPPlaybackClient(baseURL string, timeout time.Duration) *HTTPPlaybackC
 	return &HTTPPlaybackClient{baseURL: strings.TrimRight(baseURL, "/"), client: &http.Client{Timeout: timeout}}
 }
 
-func (c *HTTPPlaybackClient) ExecuteCommand(ctx context.Context, jamID string, authHeader string, reqBody PlaybackCommandRequest) (PlaybackCommandAccepted, error) {
+func (c *HTTPPlaybackClient) ExecuteCommand(ctx context.Context, jamID string, xAuthHeaders http.Header, reqBody PlaybackCommandRequest) (PlaybackCommandAccepted, error) {
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return PlaybackCommandAccepted{}, fmt.Errorf("marshal playback request: %w", err)
@@ -156,8 +105,10 @@ func (c *HTTPPlaybackClient) ExecuteCommand(ctx context.Context, jamID string, a
 		return PlaybackCommandAccepted{}, fmt.Errorf("build playback request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if strings.TrimSpace(authHeader) != "" {
-		req.Header.Set("Authorization", authHeader)
+	for k, vs := range xAuthHeaders {
+		for _, v := range vs {
+			req.Header.Add(k, v)
+		}
 	}
 
 	resp, err := c.client.Do(req)

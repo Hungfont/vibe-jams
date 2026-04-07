@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	sharedauth "video-streaming/backend/shared/auth"
 )
 
 // Handler exposes BFF orchestration endpoint routes.
@@ -28,6 +30,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	claims, xAuthHeaders, ok := extractGatewayIdentity(r)
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, Envelope{Success: false, Error: &ErrorBody{Code: "unauthorized", Message: "missing or invalid identity context"}})
+		return
+	}
+
 	var req OrchestrateRequest
 	if r.Body != nil {
 		defer r.Body.Close()
@@ -37,12 +45,51 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	data, errBody, status := h.service.Orchestrate(r.Context(), sessionID, strings.TrimSpace(r.Header.Get("Authorization")), req)
+	data, errBody, status := h.service.Orchestrate(r.Context(), sessionID, claims, xAuthHeaders, req)
 	if errBody != nil {
 		writeJSON(w, status, Envelope{Success: false, Error: errBody})
 		return
 	}
 	writeJSON(w, http.StatusOK, Envelope{Success: true, Data: data})
+}
+
+// extractGatewayIdentity reads X-Auth-* headers injected by api-gateway and validates them.
+// Returns the normalized claims, the X-Auth header set to forward downstream, and whether the identity is valid.
+func extractGatewayIdentity(r *http.Request) (sharedauth.Claims, http.Header, bool) {
+	userID := strings.TrimSpace(r.Header.Get("X-Auth-UserId"))
+	if userID == "" {
+		return sharedauth.Claims{}, nil, false
+	}
+	plan := strings.TrimSpace(r.Header.Get("X-Auth-Plan"))
+	sessionState := strings.TrimSpace(r.Header.Get("X-Auth-SessionState"))
+	if strings.ToLower(sessionState) != sharedauth.SessionStateValid {
+		return sharedauth.Claims{}, nil, false
+	}
+
+	var scope []string
+	if raw := strings.TrimSpace(r.Header.Get("X-Auth-Scope")); raw != "" {
+		for _, s := range strings.Split(raw, ",") {
+			if trimmed := strings.TrimSpace(s); trimmed != "" {
+				scope = append(scope, trimmed)
+			}
+		}
+	}
+
+	claims := sharedauth.Claims{
+		UserID:       userID,
+		Plan:         plan,
+		SessionState: sessionState,
+		Scope:        scope,
+	}
+
+	xAuthHeaders := make(http.Header)
+	for k, vs := range r.Header {
+		if strings.HasPrefix(strings.ToLower(k), "x-auth-") {
+			xAuthHeaders[k] = vs
+		}
+	}
+
+	return claims, xAuthHeaders, true
 }
 
 func parseOrchestrationRoute(path string) (string, bool) {

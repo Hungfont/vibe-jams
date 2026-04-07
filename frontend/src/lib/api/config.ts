@@ -1,15 +1,17 @@
 import type { BackendService } from "@/lib/api/types";
 
 const DEFAULTS: Record<BackendService, string> = {
+  gateway: "http://localhost:8085",
   auth: "http://localhost:8081",
   catalog: "http://localhost:8083",
   jam: "http://localhost:8080",
   playback: "http://localhost:8082",
   bff: "http://localhost:8084",
-  realtime: "http://localhost:8085",
+  realtime: "http://localhost:8086",
 };
 
 const ENV_KEYS: Record<BackendService, string> = {
+  gateway: "API_GATEWAY_URL",
   auth: "AUTH_SERVICE_URL",
   catalog: "CATALOG_SERVICE_URL",
   jam: "JAM_SERVICE_URL",

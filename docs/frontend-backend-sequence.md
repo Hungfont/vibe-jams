@@ -120,12 +120,15 @@ When implementing or reviewing jam flows, keep UI usage tied to page responsibil
 
 ## Service Base URLs (frontend config defaults)
 
+- api-gateway (public ingress): http://localhost:8085
 - auth-service: http://localhost:8081
 - jam-service: http://localhost:8080
 - playback-service: http://localhost:8082
 - catalog-service: http://localhost:8083
-- api-service (BFF): http://localhost:8084
-- rt-gateway: http://localhost:8085
+- api-service (BFF, internal only): http://localhost:8084
+- rt-gateway: http://localhost:8086
+
+> **Note**: `api-gateway` (port 8085) is the sole public entry point for all BFF and auth flows. `api-service` (port 8084) is internal-only and not reachable from browsers or frontend servers directly.
 
 ## Sequence 1: HTTP Request/Response Flow
 
@@ -134,6 +137,7 @@ sequenceDiagram
     autonumber
     actor U as Browser (Frontend UI)
     participant N as Next.js API Routes (frontend/src/app/api)
+    participant G as api-gateway
     participant A as auth-service
     participant J as jam-service
     participant P as playback-service
@@ -142,23 +146,31 @@ sequenceDiagram
 
     Note over U,N: 0) AuthN lifecycle on frontend auth boundary
     U->>N: POST /api/auth/login
-    N->>A: POST /v1/auth/login
-    A-->>N: access+refresh token pair, claims
+    N->>G: POST /v1/auth/login
+    G->>A: POST /v1/auth/login
+    A-->>G: access+refresh token pair, claims
+    G-->>N: upstream response
     N-->>U: Envelope success/error + HttpOnly cookie set
 
     U->>N: POST /api/auth/refresh (X-CSRF-Token)
-    N->>A: POST /v1/auth/refresh
-    A-->>N: rotated token pair, claims
+    N->>G: POST /v1/auth/refresh
+    G->>A: POST /v1/auth/refresh
+    A-->>G: rotated token pair, claims
+    G-->>N: upstream response
     N-->>U: Envelope success/error + rotated cookies
 
     U->>N: POST /api/auth/logout (X-CSRF-Token)
-    N->>A: POST /v1/auth/logout
-    A-->>N: status
+    N->>G: POST /v1/auth/logout
+    G->>A: POST /v1/auth/logout
+    A-->>G: status
+    G-->>N: upstream response
     N-->>U: Envelope success/error + cookie clear
 
     U->>N: GET /api/auth/me
-    N->>A: GET /v1/auth/me
-    A-->>N: normalized claims
+    N->>G: GET /v1/auth/me
+    G->>A: GET /v1/auth/me
+    A-->>G: normalized claims
+    G-->>N: upstream response
     N-->>U: Envelope success/error
 
     Note over U,N: 1) Auth validation used by protected frontend routes
@@ -189,16 +201,19 @@ sequenceDiagram
     C-->>N: lookup response or 404
     N-->>U: Envelope success/error
 
-    Note over U,N: 5) BFF orchestration (SSR + room bootstrap)
+    Note over U,N: 5) BFF orchestration (SSR + room bootstrap) — flows through api-gateway
     U->>N: POST /api/bff/jam/{jamId}/orchestration
-    N->>B: POST /v1/bff/mvp/sessions/{jamId}/orchestration
-    B->>A: POST /internal/v1/auth/validate (required)
-    B->>J: GET /api/v1/jams/{jamId}/state (required)
+    N->>G: POST /v1/bff/mvp/sessions/{jamId}/orchestration (Bearer token)
+    G->>A: POST /internal/v1/auth/validate (token verification)
+    A-->>G: 200 claims or 401
+    G->>B: POST /v1/bff/mvp/sessions/{jamId}/orchestration (X-Auth-* headers, no Authorization)
+    B->>J: GET /api/v1/jams/{jamId}/state (X-Auth-* forwarded, required)
     opt trackId present
         B->>C: GET /internal/v1/catalog/tracks/{trackId} (optional)
         C-->>B: track lookup or degradation issue
     end
-    B-->>N: OrchestrateData (partial possible)
+    B-->>G: OrchestrateData (partial possible)
+    G-->>N: upstream response
     N-->>U: Envelope success/error
 ```
 
@@ -243,10 +258,10 @@ sequenceDiagram
 
 | Frontend route | Backend service | Upstream endpoint |
 | --- | --- | --- |
-| POST /api/auth/login | auth-service | POST /v1/auth/login |
-| POST /api/auth/refresh | auth-service | POST /v1/auth/refresh |
-| POST /api/auth/logout | auth-service | POST /v1/auth/logout |
-| GET /api/auth/me | auth-service | GET /v1/auth/me |
+| POST /api/auth/login | api-gateway -> auth-service | POST /v1/auth/login |
+| POST /api/auth/refresh | api-gateway -> auth-service | POST /v1/auth/refresh |
+| POST /api/auth/logout | api-gateway -> auth-service | POST /v1/auth/logout |
+| GET /api/auth/me | api-gateway -> auth-service | GET /v1/auth/me |
 | POST /api/auth/validate | auth-service | POST /internal/v1/auth/validate |
 | POST /api/jam/create | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/create |
 | POST /api/jam/{jamId}/join | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/join |
@@ -261,7 +276,7 @@ sequenceDiagram
 | POST /api/jam/{jamId}/moderation/kick | auth-service -> jam-service | POST /internal/v1/auth/validate, POST /api/v1/jams/{jamId}/moderation/kick |
 | POST /api/jam/{jamId}/playback/commands | auth-service -> playback-service | POST /internal/v1/auth/validate, POST /v1/jam/sessions/{jamId}/playback/commands |
 | GET /api/catalog/tracks/{trackId} | catalog-service | GET /internal/v1/catalog/tracks/{trackId} |
-| POST /api/bff/jam/{jamId}/orchestration | api-service (BFF) | POST /v1/bff/mvp/sessions/{jamId}/orchestration |
+| POST /api/bff/jam/{jamId}/orchestration | api-gateway -> api-service (BFF) | POST /v1/bff/mvp/sessions/{jamId}/orchestration |
 | GET /api/realtime/ws-config | none (frontend-local config) | returns rt-gateway ws URL |
 
 ## Notes
@@ -269,6 +284,9 @@ sequenceDiagram
 - Frontend route handlers normalize backend errors into a common envelope.
 - Frontend auth routes issue `auth_token` and `refresh_token` as HttpOnly cookies and enforce CSRF header matching for refresh/logout.
 - auth-service token validation is the shared gate for protected mutations.
-- api-service BFF treats auth and jam as required dependencies; catalog can degrade and still return partial orchestration data.
+- **api-gateway is the sole public ingress**. It validates Bearer tokens via `POST /internal/v1/auth/validate` on auth-service, then injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` headers and strips `Authorization` before forwarding to api-service.
+- api-service reads identity from `X-Auth-*` headers only. It does not call auth-service. Requests without `X-Auth-UserId` are rejected with `401 unauthorized`.
+- api-service forwards `X-Auth-*` headers to jam-service and playback-service (not the raw `Authorization` header).
+- api-service BFF treats jam as a required dependency; catalog can degrade and still return partial orchestration data.
 - Orchestration is side-effect free. Playback mutations are accepted only on `POST /api/jam/{jamId}/playback/commands`; sending `playbackCommand` to orchestration returns `400 invalid_input`.
 - rt-gateway fanout uses Kafka events and can recover client gaps by fetching jam-service state snapshots.

@@ -14,11 +14,9 @@ const (
 	defaultIdleTimeoutSec     = 30
 	defaultShutdownTimeoutSec = 10
 	defaultFeatureBFFEnabled  = true
-	defaultAuthServiceURL     = "http://localhost:8081"
 	defaultJamServiceURL      = "http://localhost:8080"
 	defaultPlaybackServiceURL = "http://localhost:8082"
 	defaultCatalogServiceURL  = "http://localhost:8083"
-	defaultAuthTimeoutMS      = 800
 	defaultJamTimeoutMS       = 1200
 	defaultPlaybackTimeoutMS  = 1000
 	defaultCatalogTimeoutMS   = 800
@@ -32,11 +30,9 @@ type Config struct {
 	IdleTimeout        time.Duration
 	ShutdownTimeout    time.Duration
 	FeatureBFFEnabled  bool
-	AuthServiceURL     string
 	JamServiceURL      string
 	PlaybackServiceURL string
 	CatalogServiceURL  string
-	AuthTimeout        time.Duration
 	JamTimeout         time.Duration
 	PlaybackTimeout    time.Duration
 	CatalogTimeout     time.Duration
@@ -59,10 +55,6 @@ func Load() (Config, error) {
 	shutdownSec, err := intFromEnv("SHUTDOWN_TIMEOUT_SEC", defaultShutdownTimeoutSec)
 	if err != nil {
 		return Config{}, fmt.Errorf("parse SHUTDOWN_TIMEOUT_SEC: %w", err)
-	}
-	authTimeoutMS, err := intFromEnv("BFF_TIMEOUT_AUTH_MS", defaultAuthTimeoutMS)
-	if err != nil {
-		return Config{}, fmt.Errorf("parse BFF_TIMEOUT_AUTH_MS: %w", err)
 	}
 	jamTimeoutMS, err := intFromEnv("BFF_TIMEOUT_JAM_MS", defaultJamTimeoutMS)
 	if err != nil {
@@ -88,11 +80,9 @@ func Load() (Config, error) {
 		IdleTimeout:        time.Duration(idleSec) * time.Second,
 		ShutdownTimeout:    time.Duration(shutdownSec) * time.Second,
 		FeatureBFFEnabled:  featureEnabled,
-		AuthServiceURL:     stringFromEnv("AUTH_SERVICE_URL", defaultAuthServiceURL),
 		JamServiceURL:      stringFromEnv("JAM_SERVICE_URL", defaultJamServiceURL),
 		PlaybackServiceURL: stringFromEnv("PLAYBACK_SERVICE_URL", defaultPlaybackServiceURL),
 		CatalogServiceURL:  stringFromEnv("CATALOG_SERVICE_URL", defaultCatalogServiceURL),
-		AuthTimeout:        time.Duration(authTimeoutMS) * time.Millisecond,
 		JamTimeout:         time.Duration(jamTimeoutMS) * time.Millisecond,
 		PlaybackTimeout:    time.Duration(playbackTimeoutMS) * time.Millisecond,
 		CatalogTimeout:     time.Duration(catalogTimeoutMS) * time.Millisecond,
@@ -110,10 +100,10 @@ func (c Config) Validate() error {
 	if c.ServerPort <= 0 {
 		return fmt.Errorf("SERVER_PORT must be positive")
 	}
-	if c.AuthTimeout <= 0 || c.JamTimeout <= 0 || c.PlaybackTimeout <= 0 || c.CatalogTimeout <= 0 {
+	if c.JamTimeout <= 0 || c.PlaybackTimeout <= 0 || c.CatalogTimeout <= 0 {
 		return fmt.Errorf("all BFF dependency timeouts must be positive")
 	}
-	if c.AuthServiceURL == "" || c.JamServiceURL == "" || c.PlaybackServiceURL == "" || c.CatalogServiceURL == "" {
+	if c.JamServiceURL == "" || c.PlaybackServiceURL == "" || c.CatalogServiceURL == "" {
 		return fmt.Errorf("all dependency URLs must be configured")
 	}
 	return nil
