@@ -28,26 +28,18 @@ describe("LobbyClient", () => {
   });
 
   it("navigates to jam room after successful create flow", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        jsonResponse({
-          success: true,
-          data: { userId: "host-1", plan: "premium", sessionState: "valid" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          success: true,
-          data: {
-            jamId: "jam-create-1",
-            status: "active",
-            hostUserId: "host-1",
-            participants: [{ userId: "host-1", role: "host" }],
-            sessionVersion: 1,
-          },
-        }),
-      );
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        success: true,
+        data: {
+          jamId: "jam-create-1",
+          status: "active",
+          hostUserId: "host-1",
+          participants: [{ userId: "host-1", role: "host" }],
+          sessionVersion: 1,
+        },
+      }),
+    );
 
     vi.stubGlobal("fetch", fetchMock);
 
@@ -61,7 +53,7 @@ describe("LobbyClient", () => {
     await waitFor(() => {
       expect(routerMocks.push).toHaveBeenCalledWith("/jam/jam-create-1");
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("navigates to jam room after successful join flow", async () => {

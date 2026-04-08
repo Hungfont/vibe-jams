@@ -35,7 +35,6 @@ The sections below are intentionally ordered by page runtime path.
     - Create Jam
     - Join Jam
 - Frontend API routes used in order:
-    - `POST /api/auth/validate` (create pre-check)
     - `POST /api/jam/create` (create flow)
     - `POST /api/jam/{jamId}/join` (join flow)
 - UI primitives used from frontend/src/components/ui:
@@ -131,7 +130,7 @@ When implementing or reviewing jam flows, keep UI usage tied to page responsibil
 - api-service (BFF, internal only): http://localhost:8084
 - rt-gateway: http://localhost:8086
 
-> **Note**: `api-gateway` (port 8085) is the sole public entry point for all BFF and auth flows. `api-service` (port 8084) is internal-only and not reachable from browsers or frontend servers directly.
+> **Note**: `api-gateway` (port 8085) is the sole public entry point for browser-facing BFF and auth lifecycle flows. `api-service` (port 8084) is internal-only and not reachable from browsers or frontend servers directly.
 
 ## Sequence 1: HTTP Request/Response Flow
 
@@ -176,19 +175,10 @@ sequenceDiagram
     G-->>N: upstream response
     N-->>U: Envelope success/error
 
-    Note over U,N: 1) Auth validation API route (authN/authZ flow)
-    U->>N: POST /api/auth/validate
-    N->>G: POST /internal/v1/auth/validate
-    G->>A: POST /internal/v1/auth/validate
-    A-->>G: 200 claims or 401
-    G-->>N: upstream response
-    N-->>U: Envelope success/error
-
-    Note over U,N: 2) Mandatory BFF-first hop for all microservice HTTP calls
+    Note over U,N: 1) Mandatory BFF-first hop for all microservice HTTP calls
     U->>N: POST /api/jam/create (or join/leave/end/queue/*/moderation/*)
     N->>G: POST /v1/bff/mvp/sessions/{jamId}/commands
-    G->>A: POST /internal/v1/auth/validate (token verification)
-    A-->>G: 200 claims or 401
+    G->>G: Verify bearer token locally (TokenVerifier, HS256)
     G->>B: POST /v1/bff/mvp/sessions/{jamId}/commands (X-Auth-* headers)
     B->>J: /api/v1/jams/... endpoint
     J-->>B: session/queue response
@@ -232,11 +222,10 @@ sequenceDiagram
     G-->>N: upstream response
     N-->>U: Envelope success/error
 
-    Note over U,N: 5) BFF orchestration (SSR + room bootstrap) — flows through api-gateway
+    Note over U,N: 4) BFF orchestration (SSR + room bootstrap) — flows through api-gateway
     U->>N: POST /api/bff/jam/{jamId}/orchestration
     N->>G: POST /v1/bff/mvp/sessions/{jamId}/orchestration (Bearer token)
-    G->>A: POST /internal/v1/auth/validate (token verification)
-    A-->>G: 200 claims or 401
+    G->>G: Verify bearer token locally (TokenVerifier, HS256)
     G->>B: POST /v1/bff/mvp/sessions/{jamId}/orchestration (X-Auth-* headers, Authorization preserved for compatibility)
     B->>J: GET /api/v1/jams/{jamId}/state (X-Auth-* forwarded, required)
     opt trackId present
@@ -305,7 +294,7 @@ sequenceDiagram
 | POST /api/auth/refresh | api-gateway -> auth-service | POST /v1/auth/refresh |
 | POST /api/auth/logout | api-gateway -> auth-service | POST /v1/auth/logout |
 | GET /api/auth/me | api-gateway -> auth-service | GET /v1/auth/me |
-| POST /api/auth/validate | api-gateway -> auth-service | POST /internal/v1/auth/validate |
+| POST /api/auth/validate | auth-service (frontend server-to-service validation helper) | POST /internal/v1/auth/validate |
 | POST /api/jam/create | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/create |
 | POST /api/jam/{jamId}/join | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/join |
 | POST /api/jam/{jamId}/leave | api-gateway -> api-service (BFF) -> jam-service | POST /api/v1/jams/{jamId}/leave |
@@ -329,12 +318,12 @@ sequenceDiagram
 
 - Frontend route handlers normalize backend errors into a common envelope.
 - Frontend auth routes issue `auth_token` and `refresh_token` as HttpOnly cookies and enforce CSRF header matching for refresh/logout.
-- auth-service token validation remains the shared gate for protected mutations through api-gateway validation middleware.
-- **api-gateway is the sole public ingress**. It validates Bearer tokens via `POST /internal/v1/auth/validate` on auth-service, preferring `Authorization` and falling back to `auth_token`/`token` cookies when header auth is absent, then injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` headers before forwarding to api-service.
+- **api-gateway is the sole public ingress**. It validates Bearer tokens locally via shared `TokenVerifier` (HS256), preferring `Authorization` and falling back to `auth_token`/`token` cookies when header auth is absent, then injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` headers before forwarding to api-service.
 - api-service reads identity from `X-Auth-*` headers only. It does not call auth-service. Requests without `X-Auth-UserId` are rejected with `401 unauthorized`.
 - Non-auth frontend microservice HTTP calls are routed via api-service (BFF) before downstream delegation.
 - Frontend websocket connect path is routed through `api-gateway -> api-service (BFF)` via `WS /v1/bff/mvp/realtime/ws`; direct browser websocket calls to rt-gateway `/ws` are non-compliant.
 - During migration compatibility, api-gateway preserves `Authorization` (including cookie-derived bearer fallback) while also injecting `X-Auth-*` headers.
+- auth-service remains responsible for auth lifecycle endpoints (`/v1/auth/login`, `/v1/auth/refresh`, `/v1/auth/logout`, `/v1/auth/me`), while protected gateway route token checks no longer call auth-service validate.
 - api-service BFF treats jam as a required dependency; catalog can degrade and still return partial orchestration data.
 - Orchestration is side-effect free. Playback mutations are accepted only on `POST /api/jam/{jamId}/playback/commands`; sending `playbackCommand` to orchestration returns `400 invalid_input`.
 - rt-gateway fanout uses Kafka events and can recover client gaps by fetching jam-service state snapshots.

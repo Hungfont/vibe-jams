@@ -12,7 +12,7 @@ import { ToastStack } from "@/components/ui/toast";
 import { useToast } from "@/components/ui/use-toast";
 import type { ApiEnvelope } from "@/lib/api/types";
 import { joinJamSchema } from "@/lib/jam/schemas";
-import type { Claims, SessionSnapshot } from "@/lib/jam/types";
+import type { SessionSnapshot } from "@/lib/jam/types";
 
 export function LobbyClient() {
   const router = useRouter();
@@ -29,25 +29,6 @@ export function LobbyClient() {
   const runCreate = React.useCallback(async () => {
     setIsSubmitting(true);
     setErrorText(null);
-
-    const authResponse = await fetch("/api/auth/validate", { method: "POST" });
-    const authEnvelope = await parseEnvelope<Claims>(authResponse);
-    if (!authEnvelope.success || !authEnvelope.data) {
-      const message = authEnvelope.error?.message ?? "Unauthorized";
-      setErrorText(message);
-      toast({ title: "Auth failed", description: message, variant: "error" });
-      setIsSubmitting(false);
-      return;
-    }
-
-    const plan = authEnvelope.data.plan.trim().toLowerCase();
-    if (!["premium", "premium_plus", "pro"].includes(plan)) {
-      const message = "Premium plan required to create Jam";
-      setErrorText(message);
-      toast({ title: "Premium required", description: message, variant: "error" });
-      setIsSubmitting(false);
-      return;
-    }
 
     const response = await fetch("/api/jam/create", { method: "POST" });
     const envelope = await parseEnvelope<SessionSnapshot>(response);

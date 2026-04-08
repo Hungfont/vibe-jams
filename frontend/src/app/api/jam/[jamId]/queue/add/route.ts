@@ -1,7 +1,6 @@
 import type { NextRequest } from "next/server";
 
 import { resolveAuthHeaders } from "@/lib/api/auth";
-import { validateClaims } from "@/lib/api/claims";
 import { backendJson } from "@/lib/api/http";
 import { jsonError, jsonSuccess } from "@/lib/api/response";
 import { queueAddSchema } from "@/lib/jam/schemas";
@@ -16,11 +15,6 @@ export async function POST(
     return jsonError("unauthorized", "missing authentication context", 401);
   }
 
-  const claims = await validateClaims(auth.authHeader, auth.cookieHeader);
-  if (!claims.ok || !claims.claims) {
-    return jsonError(claims.code ?? "unauthorized", claims.message ?? "unauthorized", 401);
-  }
-
   const body = (await request.json().catch(() => null)) as unknown;
   const parsed = queueAddSchema.safeParse(body);
   if (!parsed.success) {
@@ -32,10 +26,7 @@ export async function POST(
     service: "gateway",
     path: `/api/v1/jams/${encodeURIComponent(jamId)}/queue/add`,
     method: "POST",
-    body: {
-      ...parsed.data,
-      addedBy: claims.claims.userId,
-    },
+    body: parsed.data,
     authHeader: auth.authHeader,
     cookieHeader: auth.cookieHeader,
   });

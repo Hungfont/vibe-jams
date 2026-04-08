@@ -1,7 +1,6 @@
 import type { NextRequest } from "next/server";
 
 import { resolveAuthHeaders } from "@/lib/api/auth";
-import { validateClaims } from "@/lib/api/claims";
 import { backendJson } from "@/lib/api/http";
 import { jsonError, jsonSuccess } from "@/lib/api/response";
 import { playbackCommandSchema } from "@/lib/jam/schemas";
@@ -14,11 +13,6 @@ export async function POST(
   const auth = resolveAuthHeaders(request);
   if (!auth) {
     return jsonError("unauthorized", "missing authentication context", 401);
-  }
-
-  const claims = await validateClaims(auth.authHeader, auth.cookieHeader);
-  if (!claims.ok || !claims.claims) {
-    return jsonError(claims.code ?? "unauthorized", claims.message ?? "unauthorized", 401);
   }
 
   const body = (await request.json().catch(() => null)) as unknown;
