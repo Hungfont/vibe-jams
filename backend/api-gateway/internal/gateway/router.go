@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"video-streaming/backend/api-gateway/internal/config"
+	sharedauth "video-streaming/backend/shared/auth"
 )
 
 // NewRouter builds the api-gateway HTTP handler.
@@ -27,9 +29,21 @@ func NewRouter(cfg config.Config) (http.Handler, error) {
 		return nil, err
 	}
 
+	previousKeys, err := sharedauth.ParsePreviousKeys(cfg.JWTPreviousKeys)
+	if err != nil {
+		return nil, fmt.Errorf("parse JWT previous keys: %w", err)
+	}
+	verifier, err := sharedauth.NewTokenVerifier(
+		sharedauth.VerifierKey{KeyID: cfg.JWTActiveKeyID, Secret: cfg.JWTActiveKeySecret},
+		previousKeys,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build JWT verifier: %w", err)
+	}
+
 	authProxy := httputil.NewSingleHostReverseProxy(authURL)
 	apiProxy := httputil.NewSingleHostReverseProxy(apiURL)
-	authn := newAuthnMiddleware(cfg.AuthServiceURL, cfg.AuthTimeout)
+	authn := newAuthnMiddleware(verifier)
 	upstreamTimeout := cfg.UpstreamTimeout
 
 	mux := http.NewServeMux()

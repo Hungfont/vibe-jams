@@ -25,7 +25,31 @@ type Validator interface {
 	ValidateBearerToken(ctx context.Context, bearerToken string) (sharedauth.Claims, error)
 }
 
-// HTTPValidator validates tokens by calling auth-service.
+// JWTValidator verifies tokens locally using the shared TokenVerifier (no HTTP call).
+type JWTValidator struct {
+	verifier *sharedauth.TokenVerifier
+}
+
+// NewJWTValidator builds a local JWT validator from a shared TokenVerifier.
+func NewJWTValidator(verifier *sharedauth.TokenVerifier) *JWTValidator {
+	return &JWTValidator{verifier: verifier}
+}
+
+// ValidateBearerToken verifies the JWT locally and returns normalized claims.
+func (v *JWTValidator) ValidateBearerToken(_ context.Context, bearerToken string) (sharedauth.Claims, error) {
+	raw := strings.TrimPrefix(strings.TrimSpace(bearerToken), "Bearer ")
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return sharedauth.Claims{}, ErrUnauthorized
+	}
+	claims, err := v.verifier.VerifyAndExtractClaims(raw)
+	if err != nil {
+		return sharedauth.Claims{}, fmt.Errorf("%w: %v", ErrUnauthorized, err)
+	}
+	return claims, nil
+}
+
+// HTTPValidator validates tokens by calling auth-service (legacy fallback).
 type HTTPValidator struct {
 	baseURL string
 	client  *http.Client

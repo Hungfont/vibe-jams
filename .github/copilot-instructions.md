@@ -52,15 +52,8 @@ When running `/opsx:explore`, `/opsx:propose`, `/opsx:apply`, or `/opsx:archive`
 - Trigger: change scope is primarily `backend/**`, APIs, handlers, repositories, Kafka, config, or backend tests.
 - Rules: `.github/rules/backend/**` (optionally `.github/rules/common/**` for shared security or patterns).
 - Instructions: `.github/instructions/backend/be-*.instructions.md`.
-- Skills: `.github/skills/golang-backend-development/SKILL.md`, `.github/skills/kafka-engineer/SKILL.md`, `.github/skills/redis-best-practices/SKILL.md`, `.github/skills/tdd-workflow/SKILL.md` when relevant.
+- Skills: `.github/skills/golang-backend-development/SKILL.md`, `.github/skills/kafka-engineer/SKILL.md`, `.github/skills/redis-best-practices/SKILL.md`, `.github/skills/tdd-workflow/SKILL.md`, `.github/skills/api-design-principles/SKILL.md`, `.github/skills/neon-postgres/SKILL.md` when relevant.
 - Prompts: use workspace prompts if backend prompt assets are added later.
-
-### 3) Agent (default / orchestration)
-- Trigger: OpenSpec artifact work (`openspec/**`), cross-domain planning, archive or workflow coordination.
-- Rules: `.github/rules/common/**` and domain rules only for files being changed.
-- Instructions: load only domain instructions tied to impacted files.
-- Skills: `.github/skills/openspec-explore/SKILL.md`, `.github/skills/openspec-propose/SKILL.md`, `.github/skills/openspec-apply-change/SKILL.md`, `.github/skills/openspec-archive-change/SKILL.md`.
-- Prompts: use domain prompts only when generating prompt-driven artifacts.
 
 ### Execution policy
 - Do not mix frontend and backend implementation in one pass unless explicitly requested.

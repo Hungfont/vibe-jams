@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 
@@ -118,30 +117,33 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	}
 }
 
+// authorize validates token/session. It first tries gateway-injected X-Auth-*
+// headers (zero-cost path), then falls back to the configured Validator.
 func (h *HTTPHandler) authorize(ctx context.Context, w http.ResponseWriter, r *http.Request) (sharedauth.Claims, bool) {
-	if h.validator == nil {
-		apierror.Write(w, http.StatusUnauthorized, apierror.CodeUnauthorized, "unauthorized")
-		return sharedauth.Claims{}, false
-	}
-	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
-	if authHeader == "" {
-		apierror.Write(w, http.StatusUnauthorized, apierror.CodeUnauthorized, "unauthorized")
-		return sharedauth.Claims{}, false
-	}
-
-	claims, err := h.validator.ValidateBearerToken(ctx, authHeader)
-	if err != nil {
-		if errors.Is(err, playbackauth.ErrUnauthorized) {
+	claims, ok := sharedauth.ExtractClaimsFromHeaders(r.Header)
+	if !ok {
+		if h.validator == nil {
 			apierror.Write(w, http.StatusUnauthorized, apierror.CodeUnauthorized, "unauthorized")
 			return sharedauth.Claims{}, false
 		}
-		apierror.Write(w, http.StatusUnauthorized, apierror.CodeUnauthorized, "unauthorized")
-		return sharedauth.Claims{}, false
+		authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+		if authHeader == "" {
+			apierror.Write(w, http.StatusUnauthorized, apierror.CodeUnauthorized, "unauthorized")
+			return sharedauth.Claims{}, false
+		}
+
+		var err error
+		claims, err = h.validator.ValidateBearerToken(ctx, authHeader)
+		if err != nil {
+			apierror.Write(w, http.StatusUnauthorized, apierror.CodeUnauthorized, "unauthorized")
+			return sharedauth.Claims{}, false
+		}
+		if err := sharedauth.ValidateClaims(claims); err != nil {
+			apierror.Write(w, http.StatusUnauthorized, apierror.CodeUnauthorized, "unauthorized")
+			return sharedauth.Claims{}, false
+		}
 	}
-	if err := sharedauth.ValidateClaims(claims); err != nil {
-		apierror.Write(w, http.StatusUnauthorized, apierror.CodeUnauthorized, "unauthorized")
-		return sharedauth.Claims{}, false
-	}
+
 	if strings.ToLower(claims.SessionState) != sharedauth.SessionStateValid {
 		apierror.Write(w, http.StatusUnauthorized, apierror.CodeUnauthorized, "unauthorized")
 		return sharedauth.Claims{}, false

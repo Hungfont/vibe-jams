@@ -1,6 +1,11 @@
 {
   "version": 1,
   "skills": {
+    "api-design-principles": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "b242f962d5f78bf8bc147e92f2aa0341459b9f5f2f955e9867a8c41b85f22648"
+    },
     "golang-backend-development": {
       "source": "manutej/luxor-claude-marketplace",
       "sourceType": "github",
@@ -15,6 +20,11 @@
       "source": "wshobson/agents",
       "sourceType": "github",
       "computedHash": "8df9775505ca517ba69a5a2ca2a32333f8ed0cf936dbf60c1d411f13b628cfc6"
+    },
+    "neon-postgres": {
+      "source": "neondatabase/agent-skills",
+      "sourceType": "github",
+      "computedHash": "574cf4b7c901ebc7d88d34e2c3e3d08fdec127bd0047f888de148ff0af787d4e"
     },
     "nextjs-app-router-patterns": {
       "source": "wshobson/agents",

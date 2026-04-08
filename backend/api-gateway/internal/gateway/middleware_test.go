@@ -6,23 +6,62 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+
+	sharedauth "video-streaming/backend/shared/auth"
 )
 
-func newTestMiddleware(authServerURL string) *authnMiddleware {
-	return newAuthnMiddleware(authServerURL, 500*time.Millisecond)
+const (
+	testKID    = "test-kid"
+	testSecret = "test-secret-at-least-32-chars-long"
+)
+
+func testVerifier(t *testing.T) *sharedauth.TokenVerifier {
+	t.Helper()
+	v, err := sharedauth.NewTokenVerifier(
+		sharedauth.VerifierKey{KeyID: testKID, Secret: testSecret},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("build verifier: %v", err)
+	}
+	return v
 }
 
-func applyAndRecord(t *testing.T, m *authnMiddleware, r *http.Request) *httptest.ResponseRecorder {
+func signToken(t *testing.T, kid, secret string, mc jwt.MapClaims) string {
 	t.Helper()
-	rec := httptest.NewRecorder()
-	m.apply(rec, r)
-	return rec
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, mc)
+	token.Header["kid"] = kid
+	signed, err := token.SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("sign test token: %v", err)
+	}
+	return signed
+}
+
+func validClaims() jwt.MapClaims {
+	return jwt.MapClaims{
+		"userId":       "user_1",
+		"plan":         "premium",
+		"sessionState": "valid",
+		"scope":        []any{"jam:read", "jam:control"},
+		"sid":          "sess-1",
+		"kid":          testKID,
+		"exp":          float64(time.Now().Add(time.Hour).Unix()),
+		"iat":          float64(time.Now().Unix()),
+	}
+}
+
+func newTestMiddleware(t *testing.T) *authnMiddleware {
+	t.Helper()
+	return newAuthnMiddleware(testVerifier(t))
 }
 
 func TestAuthnMiddleware_MissingToken(t *testing.T) {
 	t.Parallel()
 
-	m := newTestMiddleware("http://127.0.0.1:0")
+	m := newTestMiddleware(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
 	rec := httptest.NewRecorder()
 
@@ -36,16 +75,10 @@ func TestAuthnMiddleware_MissingToken(t *testing.T) {
 	assertErrorCode(t, rec, "missing_credentials")
 }
 
-func TestAuthnMiddleware_InvalidToken_AuthReturns401(t *testing.T) {
+func TestAuthnMiddleware_InvalidToken(t *testing.T) {
 	t.Parallel()
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusUnauthorized)
-		_, _ = w.Write([]byte(`{"error":{"code":"invalid_token","message":"invalid"}}`))
-	}))
-	defer ts.Close()
-
-	m := newTestMiddleware(ts.URL)
+	m := newTestMiddleware(t)
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
 	req.Header.Set("Authorization", "Bearer bad-token")
 	rec := httptest.NewRecorder()
@@ -60,42 +93,38 @@ func TestAuthnMiddleware_InvalidToken_AuthReturns401(t *testing.T) {
 	assertErrorCode(t, rec, "invalid_token")
 }
 
-func TestAuthnMiddleware_AuthServiceTimeout(t *testing.T) {
+func TestAuthnMiddleware_ExpiredToken(t *testing.T) {
 	t.Parallel()
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Hang until client context is cancelled.
-		<-r.Context().Done()
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
+	m := newTestMiddleware(t)
+	mc := validClaims()
+	mc["exp"] = float64(time.Now().Add(-time.Hour).Unix())
+	token := signToken(t, testKID, testSecret, mc)
 
-	m := newAuthnMiddleware(ts.URL, 20*time.Millisecond)
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
-	req.Header.Set("Authorization", "Bearer token")
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 
 	ok := m.apply(rec, req)
 	if ok {
-		t.Fatal("expected middleware to reject request")
+		t.Fatal("expected middleware to reject expired token")
 	}
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusServiceUnavailable)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusUnauthorized)
 	}
-	assertErrorCode(t, rec, "auth_service_unavailable")
+	assertErrorCode(t, rec, "invalid_token")
 }
 
 func TestAuthnMiddleware_NonValidSessionState(t *testing.T) {
 	t.Parallel()
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"userId":"user_1","plan":"premium","sessionState":"invalid"}`))
-	}))
-	defer ts.Close()
+	m := newTestMiddleware(t)
+	mc := validClaims()
+	mc["sessionState"] = "invalid"
+	token := signToken(t, testKID, testSecret, mc)
 
-	m := newTestMiddleware(ts.URL)
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
-	req.Header.Set("Authorization", "Bearer revoked-token")
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 
 	ok := m.apply(rec, req)
@@ -111,22 +140,19 @@ func TestAuthnMiddleware_NonValidSessionState(t *testing.T) {
 func TestAuthnMiddleware_ValidToken_InjectsHeaders(t *testing.T) {
 	t.Parallel()
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"userId":"user_1","plan":"premium","sessionState":"valid","scope":["jam:read","jam:control"]}`))
-	}))
-	defer ts.Close()
+	m := newTestMiddleware(t)
+	token := signToken(t, testKID, testSecret, validClaims())
 
-	m := newTestMiddleware(ts.URL)
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
-	req.Header.Set("Authorization", "Bearer valid-token")
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 
 	ok := m.apply(rec, req)
 	if !ok {
 		t.Fatalf("expected middleware to pass request; response: %d", rec.Code)
 	}
-	if req.Header.Get("Authorization") != "Bearer valid-token" {
-		t.Fatalf("Authorization header should be preserved after successful validation: got %q", req.Header.Get("Authorization"))
+	if req.Header.Get("Authorization") != "Bearer "+token {
+		t.Fatalf("Authorization header should be preserved after successful validation")
 	}
 	if req.Header.Get("X-Auth-UserId") != "user_1" {
 		t.Fatalf("X-Auth-UserId mismatch: got %q", req.Header.Get("X-Auth-UserId"))
@@ -145,21 +171,22 @@ func TestAuthnMiddleware_ValidToken_InjectsHeaders(t *testing.T) {
 func TestAuthnMiddleware_CookieFallback_InjectsAuthorizationAndHeaders(t *testing.T) {
 	t.Parallel()
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"userId":"user_cookie","plan":"premium","sessionState":"valid"}`))
-	}))
-	defer ts.Close()
+	m := newTestMiddleware(t)
+	token := signToken(t, testKID, testSecret, func() jwt.MapClaims {
+		mc := validClaims()
+		mc["userId"] = "user_cookie"
+		return mc
+	}())
 
-	m := newTestMiddleware(ts.URL)
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
-	req.Header.Set("Cookie", "auth_token=cookie-valid-token")
+	req.Header.Set("Cookie", "auth_token="+token)
 	rec := httptest.NewRecorder()
 
 	ok := m.apply(rec, req)
 	if !ok {
 		t.Fatalf("expected middleware to pass request; response: %d", rec.Code)
 	}
-	if req.Header.Get("Authorization") != "Bearer cookie-valid-token" {
+	if req.Header.Get("Authorization") != "Bearer "+token {
 		t.Fatalf("Authorization header should be set from cookie fallback: got %q", req.Header.Get("Authorization"))
 	}
 	if req.Header.Get("X-Auth-UserId") != "user_cookie" {
@@ -170,40 +197,45 @@ func TestAuthnMiddleware_CookieFallback_InjectsAuthorizationAndHeaders(t *testin
 func TestAuthnMiddleware_AuthorizationHeaderPrecedenceOverCookie(t *testing.T) {
 	t.Parallel()
 
-	var validateAuthorization string
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		validateAuthorization = r.Header.Get("Authorization")
-		_, _ = w.Write([]byte(`{"userId":"user_priority","plan":"premium","sessionState":"valid"}`))
-	}))
-	defer ts.Close()
+	m := newTestMiddleware(t)
+	headerToken := signToken(t, testKID, testSecret, func() jwt.MapClaims {
+		mc := validClaims()
+		mc["userId"] = "user_header"
+		return mc
+	}())
+	cookieToken := signToken(t, testKID, testSecret, func() jwt.MapClaims {
+		mc := validClaims()
+		mc["userId"] = "user_cookie"
+		return mc
+	}())
 
-	m := newTestMiddleware(ts.URL)
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
-	req.Header.Set("Authorization", "Bearer header-token")
-	req.Header.Set("Cookie", "auth_token=cookie-token")
+	req.Header.Set("Authorization", "Bearer "+headerToken)
+	req.Header.Set("Cookie", "auth_token="+cookieToken)
 	rec := httptest.NewRecorder()
 
 	ok := m.apply(rec, req)
 	if !ok {
 		t.Fatalf("expected middleware to pass request; response: %d", rec.Code)
 	}
-	if validateAuthorization != "Bearer header-token" {
-		t.Fatalf("middleware should validate using Authorization header before cookie token: got %q", validateAuthorization)
+	if req.Header.Get("X-Auth-UserId") != "user_header" {
+		t.Fatalf("should use Authorization header over cookie: got userId=%q", req.Header.Get("X-Auth-UserId"))
 	}
 }
 
 func TestAuthnMiddleware_ClientSpoofedXAuthHeaderStripped(t *testing.T) {
 	t.Parallel()
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"userId":"real_user","plan":"free","sessionState":"valid"}`))
-	}))
-	defer ts.Close()
+	m := newTestMiddleware(t)
+	token := signToken(t, testKID, testSecret, func() jwt.MapClaims {
+		mc := validClaims()
+		mc["userId"] = "real_user"
+		mc["plan"] = "free"
+		return mc
+	}())
 
-	m := newTestMiddleware(ts.URL)
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
-	req.Header.Set("Authorization", "Bearer valid-token")
-	// Attacker-supplied header that should be stripped.
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Auth-UserId", "attacker_user")
 	rec := httptest.NewRecorder()
 
@@ -219,25 +251,13 @@ func TestAuthnMiddleware_ClientSpoofedXAuthHeaderStripped(t *testing.T) {
 func TestAuthnMiddleware_PublicRouteBypass(t *testing.T) {
 	t.Parallel()
 
-	// Auth server should NOT be called for public routes.
-	called := false
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer ts.Close()
-
-	m := newTestMiddleware(ts.URL)
+	m := newTestMiddleware(t)
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", nil)
-	// No Authorization header — public route should pass through.
 	rec := httptest.NewRecorder()
 
 	ok := m.apply(rec, req)
 	if !ok {
 		t.Fatal("expected public route to be passed through")
-	}
-	if called {
-		t.Fatal("auth-service validate should not be called for public routes")
 	}
 }
 

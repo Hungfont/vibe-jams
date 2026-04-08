@@ -25,6 +25,7 @@ const (
 	defaultStateStoreBackend       = "redis"
 	defaultStateStorePathLocal     = ".runtime/playback-state.json"
 	defaultAuthValidationBackend   = "http"
+	defaultJWTActiveKeyID          = "auth-active"
 )
 
 // Config contains runtime settings for playback-service.
@@ -45,6 +46,9 @@ type Config struct {
 	CatalogServiceURL       string
 	CatalogTimeout          time.Duration
 	EnableCatalogValidation bool
+	JWTActiveKeyID          string
+	JWTActiveKeySecret      string
+	JWTPreviousKeys         string
 }
 
 // Load reads runtime configuration from environment variables.
@@ -108,6 +112,9 @@ func Load() (Config, error) {
 		CatalogServiceURL:       stringFromEnv("CATALOG_SERVICE_URL", defaultCatalogServiceURL),
 		CatalogTimeout:          time.Duration(catalogTimeoutSec) * time.Second,
 		EnableCatalogValidation: enableCatalogValidation,
+		JWTActiveKeyID:          stringFromEnv("AUTH_JWT_ACTIVE_KID", defaultJWTActiveKeyID),
+		JWTActiveKeySecret:      strings.TrimSpace(stringFromEnv("AUTH_JWT_ACTIVE_SECRET", "")),
+		JWTPreviousKeys:         strings.TrimSpace(os.Getenv("AUTH_JWT_PREVIOUS_KEYS")),
 	}
 
 	if err := cfg.ValidateRuntimePolicy(); err != nil {
@@ -127,7 +134,7 @@ func (c Config) ValidateRuntimePolicy() error {
 	if c.StateStoreBackend != "inmemory" && strings.TrimSpace(c.StateStorePath) == "" {
 		return fmt.Errorf("STATE_STORE_PATH is required when STATE_STORE_BACKEND=%s", c.StateStoreBackend)
 	}
-	if c.AuthValidationBackend != "http" && c.AuthValidationBackend != "inmemory" {
+	if c.AuthValidationBackend != "http" && c.AuthValidationBackend != "inmemory" && c.AuthValidationBackend != "jwt" {
 		return fmt.Errorf("invalid AUTH_VALIDATION_BACKEND: %s", c.AuthValidationBackend)
 	}
 	if strings.ToLower(strings.TrimSpace(c.RuntimeProfile)) != "test" && c.StateStoreBackend == "inmemory" {
@@ -141,8 +148,8 @@ func (c Config) ValidateRuntimePolicy() error {
 		if strings.TrimSpace(c.KafkaBootstrapServers) == "" {
 			return fmt.Errorf("KAFKA_BOOTSTRAP_SERVERS is required for non-test profiles")
 		}
-		if c.AuthValidationBackend != "http" {
-			return fmt.Errorf("AUTH_VALIDATION_BACKEND must be http for non-test profiles")
+		if c.AuthValidationBackend != "http" && c.AuthValidationBackend != "jwt" {
+			return fmt.Errorf("AUTH_VALIDATION_BACKEND must be http or jwt for non-test profiles")
 		}
 		if !c.EnableCatalogValidation {
 			return fmt.Errorf("ENABLE_CATALOG_VALIDATION must be true for non-test profiles")

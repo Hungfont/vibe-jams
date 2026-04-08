@@ -1,9 +1,12 @@
 package server
 
 import (
+  "bufio"
 	"encoding/json"
+  "errors"
 	"fmt"
 	"log/slog"
+  "net"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"video-streaming/backend/jams/internal/kafka"
 	"video-streaming/backend/jams/internal/repository"
 	"video-streaming/backend/jams/internal/service"
+	sharedauth "video-streaming/backend/shared/auth"
 	sharedcatalog "video-streaming/backend/shared/catalog"
 	sharedkafka "video-streaming/backend/shared/kafka"
 )
@@ -529,11 +533,27 @@ func NewRouter(cfg config.Config) (http.Handler, error) {
 	if cfg.EnableCatalogValidation {
 		catalogValidator = sharedcatalog.NewHTTPValidator(cfg.CatalogServiceURL, cfg.CatalogTimeout)
 	}
-	if cfg.AuthValidationBackend != "http" {
+	var authValidator auth.Validator
+	switch cfg.AuthValidationBackend {
+	case "jwt":
+		previousKeys, err := sharedauth.ParsePreviousKeys(cfg.JWTPreviousKeys)
+		if err != nil {
+			return nil, fmt.Errorf("parse JWT previous keys: %w", err)
+		}
+		verifier, err := sharedauth.NewTokenVerifier(
+			sharedauth.VerifierKey{KeyID: cfg.JWTActiveKeyID, Secret: cfg.JWTActiveKeySecret},
+			previousKeys,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("build JWT verifier: %w", err)
+		}
+		authValidator = auth.NewJWTValidator(verifier)
+	case "http":
+		authValidator = auth.NewHTTPValidator(cfg.AuthServiceURL, cfg.AuthTimeout)
+	default:
 		return nil, fmt.Errorf("AUTH_VALIDATION_BACKEND=%s is not supported", cfg.AuthValidationBackend)
 	}
 	queueService := service.NewWithCatalogValidator(queueRepo, eventProducer, catalogValidator, cfg.EnableCatalogValidation)
-	authValidator := auth.NewHTTPValidator(cfg.AuthServiceURL, cfg.AuthTimeout)
 	jamsHandler := handler.NewHTTPHandler(queueService, authValidator)
 	mux.HandleFunc("/healthz", healthzHandler)
 	mux.HandleFunc("/swagger", swaggerUIHandler)
@@ -609,6 +629,20 @@ type loggingResponseWriter struct {
 func (w *loggingResponseWriter) WriteHeader(code int) {
 	w.statusCode = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *loggingResponseWriter) Flush() {
+  if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+    flusher.Flush()
+  }
+}
+
+func (w *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+  hijacker, ok := w.ResponseWriter.(http.Hijacker)
+  if !ok {
+    return nil, nil, errors.New("response writer does not support hijacking")
+  }
+  return hijacker.Hijack()
 }
 
 func requestLoggingMiddleware(service string, next http.Handler) http.Handler {

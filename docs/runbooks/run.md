@@ -17,10 +17,11 @@ It captures only behaviors already implemented and testable in the repository.
 ### Flow 1: Jam Auth Entitlement Guard (Create and End)
 
 Steps:
-1. Send `POST /api/v1/jams/create` or `POST /api/v1/jams/{jamId}/end` with bearer token.
-2. Validate claims contract: `userId`, `plan`, `sessionState`.
-3. Reject invalid auth context before business logic.
-4. Enforce premium entitlement for protected operations.
+1. Send `POST /api/v1/jams/create` or `POST /api/v1/jams/{jamId}/end` with bearer token or gateway-injected `X-Auth-*` headers.
+2. Try gateway `X-Auth-*` headers first (zero-cost); fall back to `Validator.ValidateBearerToken` (local JWT or HTTP) if headers absent.
+3. Validate claims contract: `userId`, `plan`, `sessionState`.
+4. Reject invalid auth context before business logic.
+5. Enforce premium entitlement for protected operations.
 
 Expected outcome:
 1. Missing/invalid token or invalid session state returns `401 unauthorized`.
@@ -250,8 +251,8 @@ Steps:
 1. Client sends protected gateway route request (for example `POST /v1/bff/mvp/sessions/{sessionId}/orchestration`) with `Authorization: Bearer <token>` or with `auth_token`/`token` cookie when header auth is absent.
 2. api-gateway strips any client-supplied `X-Auth-*` headers (spoof prevention).
 3. api-gateway resolves auth credentials by preferring `Authorization`, then falling back to `auth_token`/`token` cookie values.
-4. api-gateway calls `POST /internal/v1/auth/validate` on auth-service with the resolved bearer token; applies `GATEWAY_TIMEOUT_AUTH_MS` timeout.
-5. On validate success, api-gateway checks `sessionState == "valid"`; injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` into the forwarded request.
+4. api-gateway verifies JWT locally using shared `TokenVerifier` (HS256, `AUTH_JWT_ACTIVE_KID`/`AUTH_JWT_ACTIVE_SECRET` env vars); no HTTP call to auth-service for token validation.
+5. On verify success, api-gateway checks `sessionState == "valid"`; injects `X-Auth-UserId`, `X-Auth-Plan`, `X-Auth-SessionState`, `X-Auth-Scope` into the forwarded request.
 6. api-gateway proxies the request to api-service while preserving `Authorization` for migration compatibility.
 7. api-service reads identity from `X-Auth-*` headers (does not call auth-service); rejects orchestration calls if `X-Auth-UserId` is absent or `sessionState` is not `valid`.
 8. api-service fetches jam session state from jam-service as a required dependency, forwarding `X-Auth-*` headers.
@@ -261,12 +262,11 @@ Steps:
 
 Expected outcome:
 1. Successful path returns `200` with `success=true`, normalized `claims` (from `X-Auth-*` headers), jam `sessionState`, and dependency status map.
-2. Missing/invalid token → api-gateway returns `401 invalid_token` before forwarding.
+2. Missing/invalid/expired token → api-gateway returns `401 invalid_token` before forwarding.
 3. Missing both `Authorization` and supported auth cookies → api-gateway returns `401 missing_credentials` before forwarding.
-4. auth-service timeout → api-gateway returns `503 auth_service_unavailable`.
-5. Revoked session (`sessionState != valid`) → api-gateway returns `401 invalid_token`.
-6. Required dependency (jam) timeout → api-service returns `503 dependency_timeout`.
-7. Optional catalog failure → api-service returns `200` with `data.partial=true`.
+4. Revoked session (`sessionState != valid`) → api-gateway returns `401 invalid_token`.
+5. Required dependency (jam) timeout → api-service returns `503 dependency_timeout`.
+6. Optional catalog failure → api-service returns `200` with `data.partial=true`.
 
 Edge cases:
 1. Client-injected `X-Auth-UserId` is stripped by api-gateway and replaced with validated value.
@@ -277,9 +277,9 @@ Edge cases:
 6. When both `Authorization` and auth cookie are present, gateway validates using `Authorization` value first.
 
 Startup order:
-1. `auth-service` (port 8081)
+1. `auth-service` (port 8081, handles login/refresh/logout only)
 2. `api-service` (port 8084, internal only)
-3. `api-gateway` (port 8085, public)
+3. `api-gateway` (port 8085, public, requires `AUTH_JWT_ACTIVE_KID` and `AUTH_JWT_ACTIVE_SECRET`)
 
 Validation evidence:
 1. `go test video-streaming/backend/api-gateway/...`
@@ -506,6 +506,62 @@ Validation evidence:
 3. `cd frontend && bun run lint`
 4. `cd frontend && bun run test`
 5. `cd frontend && bun run build`
+
+### Flow 19: Backend Request Logging Middleware Websocket Compatibility
+
+Steps:
+1. Wrap service mux/router with `requestLoggingMiddleware(service, handler)`.
+2. Ensure wrapped response writer records status code via `WriteHeader`.
+3. Ensure wrapped response writer forwards `http.Flusher` calls when supported by underlying writer.
+4. Ensure wrapped response writer forwards `http.Hijacker` calls when supported by underlying writer.
+5. Emit structured request log with service, method, path, status, and duration after handler execution.
+
+Expected outcome:
+1. HTTP request logging remains deterministic and includes status/duration metadata.
+2. Reverse-proxy and websocket-adjacent paths continue working under logging middleware wrapping.
+3. Unsupported hijack attempts fail with deterministic middleware error.
+
+Edge cases:
+1. Underlying writer without `http.Flusher` capability does not panic and safely no-ops flush.
+2. Underlying writer without `http.Hijacker` capability returns deterministic `response writer does not support hijacking` error.
+
+Validation evidence:
+1. `cd backend/auth-service && go test ./internal/http -run TestRequestLoggingMiddleware_PreservesFlusherAndHijacker -count=1`
+2. `cd backend/catalog-service && go test ./internal/server -run TestRequestLoggingMiddleware_PreservesFlusherAndHijacker -count=1`
+3. `cd backend/auth-service && go test ./... -count=1`
+4. `cd backend/catalog-service && go test ./... -count=1`
+
+### Flow 20: Local JWT Token Validation (Auth-Service Bottleneck Elimination)
+
+Steps:
+1. Set `AUTH_JWT_ACTIVE_KID` and `AUTH_JWT_ACTIVE_SECRET` (and optional `AUTH_JWT_PREVIOUS_KEYS`) env vars on api-gateway, jam-service, and playback-service (same values as auth-service).
+2. api-gateway verifies JWT locally via shared `TokenVerifier` (HS256), strips client `X-Auth-*` headers, and injects verified claims.
+3. Domain services (jam, playback) try gateway-injected `X-Auth-*` headers first via `ExtractClaimsFromHeaders` (zero-cost path).
+4. If `X-Auth-*` headers are absent (direct/service-to-service call), domain services fall back to `Validator.ValidateBearerToken` which uses local JWT verification when `AUTH_VALIDATION_BACKEND=jwt`.
+5. Set `AUTH_VALIDATION_BACKEND=jwt` on jam-service and playback-service to use local JWT verification. Legacy `http` backend remains available for rollback.
+
+Expected outcome:
+1. Zero HTTP calls to auth-service for token validation on any request path.
+2. Auth-service handles only login, refresh, and logout lifecycle flows.
+3. Gateway header trust path resolves claims in O(1) with no crypto overhead.
+4. JWT fallback path verifies HS256 locally without network round-trip.
+5. Key rotation via `AUTH_JWT_PREVIOUS_KEYS` (format `kid:secret,kid2:secret2`) allows seamless rollover.
+
+Edge cases:
+1. Missing/empty JWT secret at startup fails config validation deterministically.
+2. Token signed with rotated-out key (not in previous keys) returns `401 unauthorized`.
+3. Expired tokens are rejected locally without auth-service involvement.
+4. Domain service receiving request without gateway headers and without `Authorization` returns `401`.
+
+Rollback:
+1. Set `AUTH_VALIDATION_BACKEND=http` on domain services to restore auth-service HTTP validation.
+2. api-gateway rollback: redeploy previous gateway image (local JWT verification has no HTTP fallback).
+
+Validation evidence:
+1. `cd backend/shared && go test ./auth/... -count=1`
+2. `cd backend/api-gateway && go test ./... -count=1`
+3. `cd backend/jam-service && go test ./internal/handler -run TestCreateAndEndAuthorizationMatrix -count=1`
+4. `cd backend/playback-service && go test ./internal/handler -run TestPlaybackCommand -count=1`
 
 ## Assumptions Logged
 

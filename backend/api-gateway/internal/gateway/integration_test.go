@@ -5,10 +5,45 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"video-streaming/backend/api-gateway/internal/config"
 	"video-streaming/backend/api-gateway/internal/gateway"
 )
+
+const (
+	integrationKID    = "integ-kid"
+	integrationSecret = "integ-secret-at-least-32-chars!!"
+)
+
+func integrationSignToken(t *testing.T, mc jwt.MapClaims) string {
+	t.Helper()
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, mc)
+	token.Header["kid"] = integrationKID
+	signed, err := token.SignedString([]byte(integrationSecret))
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	return signed
+}
+
+func integrationValidClaims(userID, plan, state string, scope []any) jwt.MapClaims {
+	mc := jwt.MapClaims{
+		"userId":       userID,
+		"plan":         plan,
+		"sessionState": state,
+		"sid":          "sess-1",
+		"kid":          integrationKID,
+		"exp":          float64(time.Now().Add(time.Hour).Unix()),
+		"iat":          float64(time.Now().Unix()),
+	}
+	if scope != nil {
+		mc["scope"] = scope
+	}
+	return mc
+}
 
 func buildTestRouter(t *testing.T, authHandler, apiHandler http.HandlerFunc) (http.Handler, *httptest.Server, *httptest.Server) {
 	t.Helper()
@@ -19,11 +54,13 @@ func buildTestRouter(t *testing.T, authHandler, apiHandler http.HandlerFunc) (ht
 		apiServer.Close()
 	})
 	cfg := config.Config{
-		ServerPort:      8085,
-		AuthServiceURL:  authServer.URL,
-		APIServiceURL:   apiServer.URL,
-		AuthTimeout:     500_000_000, // 500ms
-		UpstreamTimeout: 2_000_000_000,
+		ServerPort:         8085,
+		AuthServiceURL:     authServer.URL,
+		APIServiceURL:      apiServer.URL,
+		AuthTimeout:        500_000_000,
+		UpstreamTimeout:    2_000_000_000,
+		JWTActiveKeyID:     integrationKID,
+		JWTActiveKeySecret: integrationSecret,
 	}
 	router, err := gateway.NewRouter(cfg)
 	if err != nil {
@@ -35,16 +72,6 @@ func buildTestRouter(t *testing.T, authHandler, apiHandler http.HandlerFunc) (ht
 func TestIntegration_ValidToken_ProxiesToAPIService(t *testing.T) {
 	t.Parallel()
 
-	authCalled := false
-	authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/internal/v1/auth/validate" {
-			authCalled = true
-			_, _ = w.Write([]byte(`{"userId":"user_1","plan":"premium","sessionState":"valid","scope":["jam:read"]}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	})
-
 	apiCalled := false
 	var receivedUserID string
 	var receivedAuthHeader string
@@ -55,24 +82,25 @@ func TestIntegration_ValidToken_ProxiesToAPIService(t *testing.T) {
 		_, _ = w.Write([]byte(`{"success":true,"data":{}}`))
 	})
 
-	router, _, _ := buildTestRouter(t, authHandler, apiHandler)
+	token := integrationSignToken(t, integrationValidClaims("user_1", "premium", "valid", []any{"jam:read"}))
+	router, _, _ := buildTestRouter(t,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }),
+		apiHandler,
+	)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
-	req.Header.Set("Authorization", "Bearer valid-token")
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
-	if !authCalled {
-		t.Fatal("expected auth-service validate to be called")
-	}
 	if !apiCalled {
 		t.Fatal("expected api-service to be called")
 	}
 	if receivedUserID != "user_1" {
 		t.Fatalf("X-Auth-UserId not forwarded: got %q", receivedUserID)
 	}
-	if receivedAuthHeader != "Bearer valid-token" {
+	if receivedAuthHeader != "Bearer "+token {
 		t.Fatalf("Authorization header should be preserved for downstream compatibility: got %q", receivedAuthHeader)
 	}
 }
@@ -80,29 +108,20 @@ func TestIntegration_ValidToken_ProxiesToAPIService(t *testing.T) {
 func TestIntegration_CookieFallback_ProxiesToAPIService(t *testing.T) {
 	t.Parallel()
 
-	authCalled := false
-	authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/internal/v1/auth/validate" {
-			authCalled = true
-			if r.Header.Get("Authorization") != "Bearer cookie-token" {
-				t.Fatalf("validate should use token resolved from cookie: got %q", r.Header.Get("Authorization"))
-			}
-			_, _ = w.Write([]byte(`{"userId":"user_cookie","plan":"premium","sessionState":"valid"}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	})
-
 	apiCalled := false
 	var receivedAuthHeader string
-	router, _, _ := buildTestRouter(t, authHandler, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		apiCalled = true
-		receivedAuthHeader = r.Header.Get("Authorization")
-		w.WriteHeader(http.StatusOK)
-	}))
+	token := integrationSignToken(t, integrationValidClaims("user_cookie", "premium", "valid", nil))
+	router, _, _ := buildTestRouter(t,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			apiCalled = true
+			receivedAuthHeader = r.Header.Get("Authorization")
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/bff/mvp/realtime/ws-config?sessionId=jam_1", nil)
-	req.Header.Set("Cookie", "auth_token=cookie-token")
+	req.Header.Set("Cookie", "auth_token="+token)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -110,13 +129,10 @@ func TestIntegration_CookieFallback_ProxiesToAPIService(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusOK)
 	}
-	if !authCalled {
-		t.Fatal("expected auth-service validate to be called")
-	}
 	if !apiCalled {
 		t.Fatal("expected api-service to be called")
 	}
-	if receivedAuthHeader != "Bearer cookie-token" {
+	if receivedAuthHeader != "Bearer "+token {
 		t.Fatalf("api-service should receive Authorization derived from cookie fallback: got %q", receivedAuthHeader)
 	}
 }
@@ -124,20 +140,14 @@ func TestIntegration_CookieFallback_ProxiesToAPIService(t *testing.T) {
 func TestIntegration_InvalidToken_GatewayRejects401(t *testing.T) {
 	t.Parallel()
 
-	authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/internal/v1/auth/validate" {
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":{"code":"invalid_token","message":"invalid"}}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	})
-
 	apiCalled := false
-	router, _, _ := buildTestRouter(t, authHandler, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		apiCalled = true
-		w.WriteHeader(http.StatusOK)
-	}))
+	router, _, _ := buildTestRouter(t,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			apiCalled = true
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
 	req.Header.Set("Authorization", "Bearer bad-token")
@@ -157,20 +167,14 @@ func TestIntegration_InvalidToken_GatewayRejects401(t *testing.T) {
 func TestIntegration_RevokedSession_GatewayRejects401(t *testing.T) {
 	t.Parallel()
 
-	authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/internal/v1/auth/validate" {
-			_, _ = w.Write([]byte(`{"userId":"user_1","plan":"premium","sessionState":"invalid"}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	})
-
-	router, _, _ := buildTestRouter(t, authHandler, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	token := integrationSignToken(t, integrationValidClaims("user_1", "premium", "invalid", nil))
+	router, _, _ := buildTestRouter(t,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
-	req.Header.Set("Authorization", "Bearer revoked-token")
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
@@ -184,14 +188,8 @@ func TestIntegration_RevokedSession_GatewayRejects401(t *testing.T) {
 func TestIntegration_PublicAuthRoute_BypassesValidation(t *testing.T) {
 	t.Parallel()
 
-	validateCalled := false
 	loginCalled := false
 	authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/internal/v1/auth/validate" {
-			validateCalled = true
-			w.WriteHeader(http.StatusOK)
-			return
-		}
 		if r.URL.Path == "/v1/auth/login" {
 			loginCalled = true
 			_, _ = w.Write([]byte(`{"accessToken":"tok","tokenType":"Bearer"}`))
@@ -205,14 +203,10 @@ func TestIntegration_PublicAuthRoute_BypassesValidation(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/login", nil)
-	// No Authorization header — public route must pass through without validation.
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
-	if validateCalled {
-		t.Fatal("validate must NOT be called for public auth routes")
-	}
 	if !loginCalled {
 		t.Fatal("login endpoint on auth-service must be called")
 	}
@@ -285,23 +279,20 @@ func TestIntegration_OpenAPIJSONRoute_IsPublicAndServed(t *testing.T) {
 func TestIntegration_SpoofedXAuthHeader_IsStripped(t *testing.T) {
 	t.Parallel()
 
-	authHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/internal/v1/auth/validate" {
-			_, _ = w.Write([]byte(`{"userId":"real_user","plan":"free","sessionState":"valid"}`))
-			return
-		}
-		w.WriteHeader(http.StatusNotFound)
-	})
+	token := integrationSignToken(t, integrationValidClaims("real_user", "free", "valid", nil))
 
 	var receivedUserID string
-	router, _, _ := buildTestRouter(t, authHandler, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedUserID = r.Header.Get("X-Auth-UserId")
-		w.WriteHeader(http.StatusOK)
-	}))
+	router, _, _ := buildTestRouter(t,
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			receivedUserID = r.Header.Get("X-Auth-UserId")
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/bff/mvp/sessions/jam_1/orchestration", nil)
-	req.Header.Set("Authorization", "Bearer valid-token")
-	req.Header.Set("X-Auth-UserId", "attacker_user") // spoofed
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Auth-UserId", "attacker_user")
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)

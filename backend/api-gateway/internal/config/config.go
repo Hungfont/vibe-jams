@@ -4,19 +4,21 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const (
-	defaultServerHost        = "0.0.0.0"
-	defaultServerPort        = 8085
-	defaultReadHeaderSec     = 5
-	defaultIdleTimeoutSec    = 30
+	defaultServerHost         = "0.0.0.0"
+	defaultServerPort         = 8085
+	defaultReadHeaderSec      = 5
+	defaultIdleTimeoutSec     = 30
 	defaultShutdownTimeoutSec = 10
-	defaultAuthServiceURL    = "http://localhost:8081"
-	defaultAPIServiceURL     = "http://localhost:8084"
-	defaultAuthTimeoutMS     = 800
-	defaultUpstreamTimeoutMS = 5000
+	defaultAuthServiceURL     = "http://localhost:8081"
+	defaultAPIServiceURL      = "http://localhost:8084"
+	defaultAuthTimeoutMS      = 800
+	defaultUpstreamTimeoutMS  = 5000
+	defaultJWTActiveKeyID     = "auth-active"
 )
 
 // Config contains runtime settings for api-gateway.
@@ -30,6 +32,9 @@ type Config struct {
 	APIServiceURL     string
 	AuthTimeout       time.Duration
 	UpstreamTimeout   time.Duration
+	JWTActiveKeyID    string
+	JWTActiveKeySecret string
+	JWTPreviousKeys   string
 }
 
 // Load reads runtime configuration from environment variables.
@@ -60,15 +65,18 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		ServerHost:        stringFromEnv("SERVER_HOST", defaultServerHost),
-		ServerPort:        serverPort,
-		ReadHeaderTimeout: time.Duration(readHeaderSec) * time.Second,
-		IdleTimeout:       time.Duration(idleSec) * time.Second,
-		ShutdownTimeout:   time.Duration(shutdownSec) * time.Second,
-		AuthServiceURL:    stringFromEnv("AUTH_SERVICE_URL", defaultAuthServiceURL),
-		APIServiceURL:     stringFromEnv("API_SERVICE_URL", defaultAPIServiceURL),
-		AuthTimeout:       time.Duration(authTimeoutMS) * time.Millisecond,
-		UpstreamTimeout:   time.Duration(upstreamTimeoutMS) * time.Millisecond,
+		ServerHost:         stringFromEnv("SERVER_HOST", defaultServerHost),
+		ServerPort:         serverPort,
+		ReadHeaderTimeout:  time.Duration(readHeaderSec) * time.Second,
+		IdleTimeout:        time.Duration(idleSec) * time.Second,
+		ShutdownTimeout:    time.Duration(shutdownSec) * time.Second,
+		AuthServiceURL:     stringFromEnv("AUTH_SERVICE_URL", defaultAuthServiceURL),
+		APIServiceURL:      stringFromEnv("API_SERVICE_URL", defaultAPIServiceURL),
+		AuthTimeout:        time.Duration(authTimeoutMS) * time.Millisecond,
+		UpstreamTimeout:    time.Duration(upstreamTimeoutMS) * time.Millisecond,
+		JWTActiveKeyID:     stringFromEnv("AUTH_JWT_ACTIVE_KID", defaultJWTActiveKeyID),
+		JWTActiveKeySecret: strings.TrimSpace(stringFromEnv("AUTH_JWT_ACTIVE_SECRET", "")),
+		JWTPreviousKeys:    strings.TrimSpace(os.Getenv("AUTH_JWT_PREVIOUS_KEYS")),
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -94,6 +102,12 @@ func (c Config) Validate() error {
 	}
 	if c.APIServiceURL == "" {
 		return fmt.Errorf("API_SERVICE_URL must be configured")
+	}
+	if c.JWTActiveKeyID == "" {
+		return fmt.Errorf("AUTH_JWT_ACTIVE_KID must be configured")
+	}
+	if c.JWTActiveKeySecret == "" {
+		return fmt.Errorf("AUTH_JWT_ACTIVE_SECRET must be configured")
 	}
 	return nil
 }

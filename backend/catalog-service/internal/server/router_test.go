@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bufio"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -123,4 +125,67 @@ func TestTrackLookupNotFound(t *testing.T) {
 	if body.Error.Code != "track_not_found" {
 		t.Fatalf("error code mismatch: got %q want track_not_found", body.Error.Code)
 	}
+}
+
+func TestRequestLoggingMiddleware_PreservesFlusherAndHijacker(t *testing.T) {
+	t.Parallel()
+
+	wrapped := requestLoggingMiddleware("catalog-service", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("expected wrapped writer to implement http.Flusher")
+		}
+		flusher.Flush()
+
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatal("expected wrapped writer to implement http.Hijacker")
+		}
+		if _, _, err := hijacker.Hijack(); err != nil {
+			t.Fatalf("expected hijack to delegate to underlying writer: %v", err)
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	rec := newHijackableRecorder(t)
+	wrapped.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusNoContent)
+	}
+	if rec.flushCount != 1 {
+		t.Fatalf("flush count mismatch: got %d want 1", rec.flushCount)
+	}
+}
+
+type hijackableRecorder struct {
+	*httptest.ResponseRecorder
+	conn       net.Conn
+	rw         *bufio.ReadWriter
+	flushCount int
+}
+
+func newHijackableRecorder(t *testing.T) *hijackableRecorder {
+	t.Helper()
+
+	client, server := net.Pipe()
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+	})
+
+	return &hijackableRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+		conn:             client,
+		rw:               bufio.NewReadWriter(bufio.NewReader(server), bufio.NewWriter(server)),
+	}
+}
+
+func (r *hijackableRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return r.conn, r.rw, nil
+}
+
+func (r *hijackableRecorder) Flush() {
+	r.flushCount++
 }
