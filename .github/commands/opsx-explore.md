@@ -18,7 +18,7 @@ Enter explore mode. Think deeply. Visualize freely. Follow the conversation wher
 - A comparison: "postgres vs sqlite for this"
 - Nothing (just enter explore mode)
 
-## Agent Context Setup (Required)
+<!-- ## Agent Context Setup (Required)
 
 Before deep exploration, resolve which custom agent context should be active and load only matching resources:
 - ALWAYS load relevant skills FIRST.
@@ -31,9 +31,9 @@ Before deep exploration, resolve which custom agent context should be active and
 - **Backend Engineer context** for `backend/**` and service exploration:
    - Rules: `.github/rules/backend/**`, add `.github/rules/common/**` if needed
    - Instructions: `.github/instructions/backend/be-*.instructions.md`
-   - Skills (as needed): `golang-patterns`, `kafka-engineer`, `redis-best-practices`, `tdd-workflow`
+   - Skills (as needed): `golang-backend-development`, `kafka-engineer`, `redis-best-practices`, `tdd-workflow`
 
-Announce the active context and loaded sources at the start of exploration.
+Announce the active context and loaded sources at the start of exploration. -->
 
 ---
 

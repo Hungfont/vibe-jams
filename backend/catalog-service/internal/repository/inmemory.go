@@ -4,11 +4,13 @@ import "strings"
 
 // Track stores catalog metadata used by command pre-check paths.
 type Track struct {
-	TrackID    string
-	Title      string
-	Artist     string
-	IsPlayable bool
-	ReasonCode string
+	TrackID      string
+	Title        string
+	Artist       string
+	IsPlayable   bool
+	ReasonCode   string
+	PolicyStatus string
+	PolicyReason string
 }
 
 // Store exposes track lookup behavior.
@@ -26,17 +28,27 @@ func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
 		tracks: map[string]Track{
 			"trk_1": {
-				TrackID:    "trk_1",
-				Title:      "Song One",
-				Artist:     "Artist One",
-				IsPlayable: true,
+				TrackID:      "trk_1",
+				Title:        "Song One",
+				Artist:       "Artist One",
+				IsPlayable:   true,
+				PolicyStatus: "allowed",
 			},
 			"trk_2": {
-				TrackID:    "trk_2",
-				Title:      "Song Two",
-				Artist:     "Artist Two",
-				IsPlayable: false,
-				ReasonCode: "license_blocked",
+				TrackID:      "trk_2",
+				Title:        "Song Two",
+				Artist:       "Artist Two",
+				IsPlayable:   false,
+				ReasonCode:   "license_blocked",
+				PolicyStatus: "allowed",
+			},
+			"trk_3": {
+				TrackID:      "trk_3",
+				Title:        "Song Three",
+				Artist:       "Artist Three",
+				IsPlayable:   true,
+				PolicyStatus: "restricted",
+				PolicyReason: "region_blocked",
 			},
 		},
 	}

@@ -15,12 +15,16 @@ import (
 )
 
 type stubCatalogValidator struct {
-	err error
+	err  error
+	resp sharedcatalog.LookupResponse
 }
 
 func (s stubCatalogValidator) ValidateTrack(_ context.Context, _ string) (sharedcatalog.LookupResponse, error) {
 	if s.err != nil {
 		return sharedcatalog.LookupResponse{}, s.err
+	}
+	if s.resp.TrackID != "" {
+		return s.resp, nil
 	}
 	return sharedcatalog.LookupResponse{TrackID: "trk_ok", IsPlayable: true}, nil
 }
@@ -28,7 +32,7 @@ func (s stubCatalogValidator) ValidateTrack(_ context.Context, _ string) (shared
 func TestAddQueueTrackRejectedWhenCatalogNotFound(t *testing.T) {
 	t.Parallel()
 
-	h := newCatalogValidationHandler(stubCatalogValidator{err: sharedcatalog.ErrTrackNotFound})
+	h := newCatalogValidationHandler(stubCatalogValidator{err: sharedcatalog.ErrTrackNotFound}, true)
 	jamID := mustCreateSession(t, h)
 
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+jamID+"/queue/add", bytes.NewBufferString(`{"trackId":"trk_missing","addedBy":"host_1","idempotencyKey":"k_nf"}`))
@@ -46,7 +50,7 @@ func TestAddQueueTrackRejectedWhenCatalogNotFound(t *testing.T) {
 func TestAddQueueTrackRejectedWhenCatalogUnavailable(t *testing.T) {
 	t.Parallel()
 
-	h := newCatalogValidationHandler(stubCatalogValidator{err: sharedcatalog.ErrTrackUnavailable})
+	h := newCatalogValidationHandler(stubCatalogValidator{err: sharedcatalog.ErrTrackUnavailable}, true)
 	jamID := mustCreateSession(t, h)
 
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+jamID+"/queue/add", bytes.NewBufferString(`{"trackId":"trk_blocked","addedBy":"host_1","idempotencyKey":"k_un"}`))
@@ -64,7 +68,7 @@ func TestAddQueueTrackRejectedWhenCatalogUnavailable(t *testing.T) {
 func TestAddQueueTrackAcceptedWhenCatalogPlayable(t *testing.T) {
 	t.Parallel()
 
-	h := newCatalogValidationHandler(stubCatalogValidator{})
+	h := newCatalogValidationHandler(stubCatalogValidator{}, true)
 	jamID := mustCreateSession(t, h)
 
 	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+jamID+"/queue/add", bytes.NewBufferString(`{"trackId":"trk_ok","addedBy":"host_1","idempotencyKey":"k_ok"}`))
@@ -92,9 +96,56 @@ func TestAddQueueTrackAcceptedWhenCatalogPlayable(t *testing.T) {
 	}
 }
 
-func newCatalogValidationHandler(catalogValidator stubCatalogValidator) *HTTPHandler {
+func TestAddQueueTrackRejectedWhenCatalogRestricted(t *testing.T) {
+	t.Parallel()
+
+	h := newCatalogValidationHandler(stubCatalogValidator{
+		resp: sharedcatalog.LookupResponse{
+			TrackID:      "trk_3",
+			IsPlayable:   true,
+			PolicyStatus: "restricted",
+			PolicyReason: "region_blocked",
+		},
+	}, true)
+	jamID := mustCreateSession(t, h)
+
+	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+jamID+"/queue/add", bytes.NewBufferString(`{"trackId":"trk_3","addedBy":"host_1","idempotencyKey":"k_rs"}`))
+	addReq.Header.Set("Authorization", "Bearer token-host")
+	addRec := httptest.NewRecorder()
+	h.ServeHTTP(addRec, addReq)
+
+	if addRec.Code != http.StatusForbidden {
+		t.Fatalf("status mismatch: got %d want %d", addRec.Code, http.StatusForbidden)
+	}
+	assertErrorCode(t, addRec, "track_restricted")
+	assertSnapshotUnchanged(t, h, jamID)
+}
+
+func TestAddQueueTrackPolicyOffAllowsRestrictedTrack(t *testing.T) {
+	t.Parallel()
+
+	h := newCatalogValidationHandler(stubCatalogValidator{
+		resp: sharedcatalog.LookupResponse{
+			TrackID:      "trk_3",
+			IsPlayable:   true,
+			PolicyStatus: "restricted",
+			PolicyReason: "region_blocked",
+		},
+	}, false)
+	jamID := mustCreateSession(t, h)
+
+	addReq := httptest.NewRequest(http.MethodPost, "/api/v1/jams/"+jamID+"/queue/add", bytes.NewBufferString(`{"trackId":"trk_3","addedBy":"host_1","idempotencyKey":"k_policy_off"}`))
+	addReq.Header.Set("Authorization", "Bearer token-host")
+	addRec := httptest.NewRecorder()
+	h.ServeHTTP(addRec, addReq)
+	if addRec.Code != http.StatusOK {
+		t.Fatalf("status mismatch: got %d want %d", addRec.Code, http.StatusOK)
+	}
+}
+
+func newCatalogValidationHandler(catalogValidator stubCatalogValidator, enabled bool) *HTTPHandler {
 	repo := repository.NewRedisQueueRepository()
-	svc := service.NewWithCatalogValidator(repo, nil, catalogValidator, true)
+	svc := service.NewWithCatalogValidator(repo, nil, catalogValidator, enabled)
 	return NewHTTPHandler(svc, stubValidator{
 		claims: sharedauth.Claims{
 			UserID:       "host_1",

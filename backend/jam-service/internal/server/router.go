@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -539,7 +540,7 @@ func NewRouter(cfg config.Config) (http.Handler, error) {
 	mux.HandleFunc("/swagger/", swaggerUIHandler)
 	mux.HandleFunc("/swagger/openapi.json", openAPISpecHandler)
 	mux.Handle("/api/v1/jams/", jamsHandler)
-	return mux, nil
+	return requestLoggingMiddleware("jam-service", mux), nil
 }
 
 // swaggerUIHandler serves Swagger UI for interactive API testing.
@@ -598,4 +599,29 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(body); err != nil {
 		return
 	}
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *loggingResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func requestLoggingMiddleware(service string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		recorder := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		slog.Info("http request",
+			"service", service,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", recorder.statusCode,
+			"durationMs", time.Since(start).Milliseconds(),
+		)
+	})
 }

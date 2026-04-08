@@ -171,18 +171,22 @@ Validation evidence:
 Steps:
 1. Keep catalog validation disabled by default with `ENABLE_CATALOG_VALIDATION=false` in jam-service and playback-service.
 2. For queue add commands, call catalog lookup by `trackId` before any queue mutation.
-3. For playback commands that include `trackId`, call catalog lookup before session/host/version transition checks.
-4. Map catalog not-found/unavailable outcomes to deterministic API errors and short-circuit command execution.
+3. Treat catalog policy-restricted lookup outcomes as deterministic `track_restricted` rejection when validation is enabled.
+4. For playback commands that include `trackId`, call catalog lookup before session/host/version transition checks.
+5. Map catalog not-found/unavailable/restricted outcomes to deterministic API errors and short-circuit command execution.
 
 Expected outcome:
 1. Playable tracks continue through command pipeline and mutate state normally.
 2. Missing tracks return `track_not_found` and do not mutate queue/playback state.
 3. Unavailable tracks return `track_unavailable` and do not mutate queue/playback state.
-4. Rejected playback commands publish zero Kafka playback events.
+4. Restricted tracks return `track_restricted` and do not mutate queue state.
+5. Rejected playback commands publish zero Kafka playback events.
+6. When validation is disabled, baseline queue add idempotency/version behavior remains unchanged.
 
 Edge cases:
 1. If `trackId` is omitted in playback request, catalog pre-check is skipped and existing behavior is preserved.
 2. Catalog timeout or upstream failure fails command fast and does not mutate state.
+3. Catalog lookup payload keeps stable policy metadata fields (`policyStatus`, `policyReason`) for policy-on/off caller compatibility.
 
 Rollout checklist:
 1. Deploy catalog-service endpoint first, keep toggles off in jam-service and playback-service.
@@ -192,7 +196,7 @@ Rollout checklist:
 
 Validation evidence:
 1. `cd backend/catalog-service && go test ./...`
-2. `cd backend/shared && go test ./...`
+2. `cd backend/shared && go test ./catalog -count=1`
 3. `cd backend/jam-service && go test ./...`
 4. `cd backend/playback-service && go test ./...`
 5. `cd backend/jam-service && go test ./internal/handler -run TestAddQueueTrack -count=1`

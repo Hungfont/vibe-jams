@@ -1,12 +1,17 @@
 package gateway
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"video-streaming/backend/api-gateway/internal/config"
 )
@@ -84,5 +89,44 @@ func NewRouter(cfg config.Config) (http.Handler, error) {
 		apiProxy.ServeHTTP(w, r)
 	})
 
-	return mux, nil
+	return requestLoggingMiddleware("api-gateway", mux), nil
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *loggingResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *loggingResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("response writer does not support hijacking")
+	}
+	return hijacker.Hijack()
+}
+
+func requestLoggingMiddleware(service string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		recorder := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		slog.Info("http request",
+			"service", service,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", recorder.statusCode,
+			"durationMs", time.Since(start).Milliseconds(),
+		)
+	})
 }

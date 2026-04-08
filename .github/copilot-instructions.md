@@ -52,7 +52,7 @@ When running `/opsx:explore`, `/opsx:propose`, `/opsx:apply`, or `/opsx:archive`
 - Trigger: change scope is primarily `backend/**`, APIs, handlers, repositories, Kafka, config, or backend tests.
 - Rules: `.github/rules/backend/**` (optionally `.github/rules/common/**` for shared security or patterns).
 - Instructions: `.github/instructions/backend/be-*.instructions.md`.
-- Skills: `.github/skills/golang-patterns/SKILL.md`, `.github/skills/kafka-engineer/SKILL.md`, `.github/skills/redis-best-practices/SKILL.md`, `.github/skills/tdd-workflow/SKILL.md` when relevant.
+- Skills: `.github/skills/golang-backend-development/SKILL.md`, `.github/skills/kafka-engineer/SKILL.md`, `.github/skills/redis-best-practices/SKILL.md`, `.github/skills/tdd-workflow/SKILL.md` when relevant.
 - Prompts: use workspace prompts if backend prompt assets are added later.
 
 ### 3) Agent (default / orchestration)

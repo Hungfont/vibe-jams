@@ -421,6 +421,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		apierror.Write(w, http.StatusNotFound, apierror.CodeTrackNotFound, "track not found")
 	case service.IsTrackUnavailable(err):
 		apierror.Write(w, http.StatusConflict, apierror.CodeTrackUnavailable, "track unavailable")
+	case service.IsTrackRestricted(err):
+		apierror.Write(w, http.StatusForbidden, apierror.CodeTrackRestricted, "track restricted")
 	case service.IsVersionConflict(err):
 		if queueVersion, ok := service.VersionConflictCurrentQueueVersion(err); ok {
 			apierror.WriteWithRetry(w, http.StatusConflict, apierror.CodeVersionConflict, err.Error(), &apierror.RetryGuidance{

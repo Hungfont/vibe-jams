@@ -67,6 +67,36 @@ func TestTrackLookupUnavailable(t *testing.T) {
 	}
 }
 
+func TestTrackLookupRestricted(t *testing.T) {
+	t.Parallel()
+
+	h, err := NewRouter(config.Config{RuntimeProfile: "test", CatalogBackend: "inmemory"})
+	if err != nil {
+		t.Fatalf("NewRouter() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/catalog/tracks/trk_3", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status mismatch: got %d want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp sharedcatalog.LookupResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TrackID != "trk_3" {
+		t.Fatalf("trackId mismatch: got %q", resp.TrackID)
+	}
+	if resp.PolicyStatus != "restricted" {
+		t.Fatalf("policyStatus mismatch: got %q", resp.PolicyStatus)
+	}
+	if resp.PolicyReason == "" {
+		t.Fatal("expected policyReason for restricted track")
+	}
+}
+
 func TestTrackLookupNotFound(t *testing.T) {
 	t.Parallel()
 

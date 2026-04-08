@@ -16,17 +16,21 @@ var (
 	ErrTrackNotFound = errors.New("track not found")
 	// ErrTrackUnavailable indicates the track exists but cannot be played.
 	ErrTrackUnavailable = errors.New("track unavailable")
+	// ErrTrackRestricted indicates the track is blocked by catalog policy.
+	ErrTrackRestricted = errors.New("track restricted")
 	// ErrDependencyUnavailable indicates catalog integration dependency is unavailable.
 	ErrDependencyUnavailable = errors.New("catalog dependency unavailable")
 )
 
 // LookupResponse defines the shared catalog track validation contract.
 type LookupResponse struct {
-	TrackID    string `json:"trackId"`
-	IsPlayable bool   `json:"isPlayable"`
-	ReasonCode string `json:"reasonCode,omitempty"`
-	Title      string `json:"title,omitempty"`
-	Artist     string `json:"artist,omitempty"`
+	TrackID      string `json:"trackId"`
+	IsPlayable   bool   `json:"isPlayable"`
+	ReasonCode   string `json:"reasonCode,omitempty"`
+	PolicyStatus string `json:"policyStatus,omitempty"`
+	PolicyReason string `json:"policyReason,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Artist       string `json:"artist,omitempty"`
 }
 
 // Validator validates a track identifier against catalog contract.
@@ -82,6 +86,12 @@ func (v *HTTPValidator) ValidateTrack(ctx context.Context, trackID string) (Look
 		}
 		if strings.TrimSpace(out.TrackID) == "" {
 			return LookupResponse{}, fmt.Errorf("lookup response missing trackId")
+		}
+		if strings.EqualFold(strings.TrimSpace(out.PolicyStatus), "restricted") {
+			if strings.TrimSpace(out.PolicyReason) == "" {
+				out.PolicyReason = "restricted"
+			}
+			return out, ErrTrackRestricted
 		}
 		if !out.IsPlayable {
 			if strings.TrimSpace(out.ReasonCode) == "" {

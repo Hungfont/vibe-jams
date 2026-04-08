@@ -34,7 +34,7 @@ Implement tasks from an OpenSpec change.
        - Instructions: `.github/instructions/frontend/fe-*.instructions.md`, Only loading for this agents.
        - Prompts: `.github/prompt/frontend/*.prompt.md` when generating instruction assets
     - **Backend Engineer**:
-       - Skills (as needed): `golang-patterns`, `kafka-engineer`, `redis-best-practices`, `tdd-workflow`
+       - Skills (as needed): `golang-backend-development`, `kafka-engineer`, `redis-best-practices`, `tdd-workflow`
        - Rules: `.github/rules/backend/**` (plus `.github/rules/common/**` when needed)
        - Instructions: `.github/instructions/backend/be-*.instructions.md`
 

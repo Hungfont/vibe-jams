@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -36,7 +37,7 @@ func NewRouter(cfg config.Config) (http.Handler, error) {
 	catalogHandler := handler.NewHTTPHandler(store)
 	mux.Handle("/internal/v1/catalog/tracks/", catalogHandler)
 	mux.HandleFunc("/healthz", healthzHandler)
-	return mux, nil
+	return requestLoggingMiddleware("catalog-service", mux), nil
 }
 
 func healthzHandler(w http.ResponseWriter, r *http.Request) {
@@ -59,4 +60,29 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *loggingResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func requestLoggingMiddleware(service string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		recorder := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		slog.Info("http request",
+			"service", service,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", recorder.statusCode,
+			"durationMs", time.Since(start).Milliseconds(),
+		)
+	})
 }

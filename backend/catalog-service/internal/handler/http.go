@@ -47,11 +47,13 @@ func (h *HTTPHandler) handleLookup(trackID string, w http.ResponseWriter, r *htt
 	}
 
 	writeJSON(w, http.StatusOK, sharedcatalog.LookupResponse{
-		TrackID:    track.TrackID,
-		IsPlayable: track.IsPlayable,
-		ReasonCode: track.ReasonCode,
-		Title:      track.Title,
-		Artist:     track.Artist,
+		TrackID:      track.TrackID,
+		IsPlayable:   track.IsPlayable,
+		ReasonCode:   track.ReasonCode,
+		PolicyStatus: track.PolicyStatus,
+		PolicyReason: track.PolicyReason,
+		Title:        track.Title,
+		Artist:       track.Artist,
 	})
 }
 

@@ -1,15 +1,15 @@
 {
   "version": 1,
   "skills": {
+    "golang-backend-development": {
+      "source": "manutej/luxor-claude-marketplace",
+      "sourceType": "github",
+      "computedHash": "91c58b2ff3561374e77af66a1b14acecb51f10b0f92f12e4b6ad09ee36702690"
+    },
     "golang-error-handling": {
       "source": "samber/cc-skills-golang",
       "sourceType": "github",
       "computedHash": "6a070882d815da88f21c83c11760d9fc1ffa87e2e57bd66f07a47b1a0566e776"
-    },
-    "golang-patterns": {
-      "source": "affaan-m/everything-claude-code",
-      "sourceType": "github",
-      "computedHash": "2168b141260f2c0c2c952afe22f0947cdc76f4339e823ab666933853e206e511"
     },
     "microservices-patterns": {
       "source": "wshobson/agents",

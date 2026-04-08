@@ -3,6 +3,7 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -33,7 +34,32 @@ func (h *Handler) Router() http.Handler {
 	mux.HandleFunc("/v1/auth/me", h.me)
 	mux.HandleFunc("/internal/v1/auth/validate", h.validateToken)
 	mux.HandleFunc("/healthz", h.healthz)
-	return mux
+	return requestLoggingMiddleware("auth-service", mux)
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *loggingResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func requestLoggingMiddleware(service string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		recorder := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(recorder, r)
+		slog.Info("http request",
+			"service", service,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", recorder.statusCode,
+			"durationMs", time.Since(start).Milliseconds(),
+		)
+	})
 }
 
 // validateToken validates a bearer token and returns normalized claims.

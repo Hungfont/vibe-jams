@@ -50,6 +50,25 @@ func TestHTTPValidatorValidateTrackUnavailable(t *testing.T) {
 	}
 }
 
+func TestHTTPValidatorValidateTrackRestricted(t *testing.T) {
+	t.Parallel()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"trackId":"trk_3","isPlayable":true,"policyStatus":"restricted","policyReason":"region_blocked"}`))
+	}))
+	defer ts.Close()
+
+	validator := NewHTTPValidator(ts.URL, 2*time.Second)
+	result, err := validator.ValidateTrack(context.Background(), "trk_3")
+	if !errors.Is(err, ErrTrackRestricted) {
+		t.Fatalf("expected ErrTrackRestricted, got %v", err)
+	}
+	if result.PolicyStatus != "restricted" {
+		t.Fatalf("policyStatus mismatch: got %q", result.PolicyStatus)
+	}
+}
+
 func TestHTTPValidatorValidateTrackNotFound(t *testing.T) {
 	t.Parallel()
 

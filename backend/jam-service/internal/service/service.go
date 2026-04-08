@@ -23,6 +23,8 @@ var (
 	ErrTrackNotFound = errors.New("track not found")
 	// ErrTrackUnavailable indicates the requested track cannot be played.
 	ErrTrackUnavailable = errors.New("track unavailable")
+	// ErrTrackRestricted indicates the requested track is blocked by policy.
+	ErrTrackRestricted = errors.New("track restricted")
 	// ErrModerationBlocked indicates actor is blocked by moderation policy.
 	ErrModerationBlocked = errors.New("moderation blocked")
 	// ErrHostOnly indicates actor is not authorized for host-only policy command.
@@ -219,8 +221,11 @@ func (s *Service) validateTrack(ctx context.Context, trackID string) error {
 		return nil
 	}
 
-	_, err := s.catalogValidator.ValidateTrack(ctx, trackID)
+	result, err := s.catalogValidator.ValidateTrack(ctx, trackID)
 	if err == nil {
+		if strings.EqualFold(strings.TrimSpace(result.PolicyStatus), "restricted") {
+			return ErrTrackRestricted
+		}
 		return nil
 	}
 
@@ -229,6 +234,9 @@ func (s *Service) validateTrack(ctx context.Context, trackID string) error {
 	}
 	if errors.Is(err, sharedcatalog.ErrTrackUnavailable) {
 		return ErrTrackUnavailable
+	}
+	if errors.Is(err, sharedcatalog.ErrTrackRestricted) {
+		return ErrTrackRestricted
 	}
 
 	return err
@@ -361,6 +369,11 @@ func IsTrackNotFound(err error) bool {
 // IsTrackUnavailable reports whether track lookup failed with unavailable semantics.
 func IsTrackUnavailable(err error) bool {
 	return errors.Is(err, ErrTrackUnavailable)
+}
+
+// IsTrackRestricted reports whether track lookup failed with policy restriction semantics.
+func IsTrackRestricted(err error) bool {
+	return errors.Is(err, ErrTrackRestricted)
 }
 
 func (s *Service) publishMutationEvents(jamID string, queueVersion int64, queueEventType string, payload any) error {

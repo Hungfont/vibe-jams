@@ -29,4 +29,4 @@ if err != nil {
 
 ## Reference
 
-See skill: `golang-patterns` for comprehensive Go idioms and patterns.
+See skill: `golang-backend-development` for comprehensive Go idioms and patterns.
